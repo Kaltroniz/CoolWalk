@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CoolWalk: the cooler way to walk across Delhi</title>
+<meta name="description" content="Walking routes for central Delhi that trade a few minutes for much less time in the heat.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+:root{
+  --ink:#14222B; --ink2:#52626D; --panel:#F4F6F7; --line:#D8E0E4; --white:#fff;
+  --cool:#0E7C66; --cool-soft:#DDF1EB; --std:#3E4C56; --hot:#B5391C; --warn:#8A5A00;
+  --display:'Bricolage Grotesque','Segoe UI',system-ui,sans-serif;
+  --body:'Instrument Sans','Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:var(--body);color:var(--ink);background:var(--panel);display:grid;grid-template-columns:400px 1fr;font-size:15px;line-height:1.45}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:3px solid #1B6FD6;outline-offset:2px}
+#map{height:100dvh;width:100%}
+.panel{height:100dvh;overflow:auto;padding:22px 20px 28px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:18px}
+h1{font:700 36px/1 var(--display);letter-spacing:-.02em;margin:0 0 8px}
+h2{font:600 13px/1.2 var(--body);color:var(--ink2);margin:0 0 8px}
+.tag{margin:0;color:var(--ink2);max-width:36ch}
+.finder{display:grid;gap:8px}
+.fieldwrap{position:relative}
+.field{display:flex;align-items:center;gap:10px;background:var(--white);border:1px solid var(--line);border-radius:10px;padding:0 12px;height:46px}
+.field:focus-within{border-color:var(--cool);box-shadow:0 0 0 3px rgba(14,124,102,.18)}
+.field input{border:0;outline:0;flex:1;background:transparent;height:100%;min-width:0}
+.pin{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font:600 12px var(--body);color:#fff;background:var(--std)}
+.pin.b{background:var(--cool)}
+.sugg{list-style:none;margin:4px 0 0;padding:4px;position:absolute;left:0;right:0;z-index:20;background:var(--white);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 24px rgba(20,34,43,.14)}
+.sugg:empty{display:none}
+.sugg button{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+.sugg button:hover,.sugg button:focus-visible{background:var(--cool-soft)}
+.sugg small{display:block;color:var(--ink2)}
+.row{display:flex;gap:8px}
+.ghost{background:none;border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;color:var(--ink2)}
+.ghost:hover{border-color:var(--ink2)}
+.presets{display:grid;gap:2px}
+.presets button{background:none;border:0;border-top:1px solid var(--line);text-align:left;padding:10px 2px;cursor:pointer}
+.presets button:last-child{border-bottom:1px solid var(--line)}
+.presets button:hover{color:var(--cool)}
+.presets span{color:var(--ink2)}
+.tradeoff input{width:100%;accent-color:var(--cool)}
+.ends{display:flex;justify-content:space-between;color:var(--ink2);font-size:13px}
+#result{min-height:96px}
+.empty{color:var(--ink2);margin:0}
+.verdict{font:600 21px/1.25 var(--display);margin:0 0 14px;letter-spacing:-.01em}
+.route{border-left:4px solid var(--std);padding:2px 0 2px 12px;margin:0 0 14px}
+.route.cool{border-left-color:var(--cool)}
+.route h3{margin:0;font:600 14px var(--body);color:var(--ink2)}
+.big{font:700 30px/1.1 var(--display);margin:2px 0}
+.route.cool .big{color:var(--cool)}
+.big small{font:500 14px var(--body);color:var(--ink2);margin-left:6px}
+.strip{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:8px 0 4px;background:#C9D1D6}
+.strip i{flex:1}
+.cap{margin:0;color:var(--ink2);font-size:13px}
+.note{background:#FFF4DB;color:var(--warn);border-radius:8px;padding:8px 10px;font-size:13px;margin:0 0 12px}
+.err{background:#FDE8E4;color:#8C2412;border-radius:8px;padding:10px 12px;margin:0}
+.busy{height:3px;background:linear-gradient(90deg,var(--cool) 30%,transparent 30%) 0 0/200% 100%;animation:sweep 1s linear infinite;border-radius:2px;margin-bottom:10px}
+@keyframes sweep{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.busy{animation:none;background:var(--cool)}}
+.legend{height:10px;border-radius:5px;background:linear-gradient(90deg,#58B8A8,#EBD77F,#F2A25C,#D9532C,#9B1C1C);margin:8px 0 4px}
+.layers label{display:flex;gap:8px;align-items:center;cursor:pointer}
+details summary{cursor:pointer;font-weight:600}
+details ol{margin:8px 0 0;padding-left:20px}
+details li{margin:2px 0}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.foot{color:var(--ink2);font-size:12.5px;margin-top:auto}
+.mk{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:600 13px var(--body);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:grab;background:var(--std)}
+.mk.b{background:var(--cool)}
+@media (max-width:820px){
+  body{grid-template-columns:1fr}
+  #map{position:fixed;inset:0}
+  .panel{position:fixed;left:0;right:0;bottom:0;height:auto;max-height:54dvh;z-index:5;border:0;border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(20,34,43,.2);padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px));gap:14px}
+  h1{font-size:28px}
+  .tag{display:none}
+}
+</style>
+</head>
+<body>
+<aside class="panel" id="panel">
+  <header>
+    <h1>CoolWalk</h1>
+    <p class="tag">Walking routes that give up a few minutes for far less time in the heat. Central Delhi, pre-monsoon 2026.</p>
+  </header>
+
+  <section class="finder" aria-label="Choose your walk">
+    <div class="fieldwrap">
+      <label class="field"><span class="pin">A</span><input id="from" type="search" placeholder="Start: a place or click the map" autocomplete="off" aria-label="Start"></label>
+      <ul class="sugg" id="suggFrom"></ul>
+    </div>
+    <div class="fieldwrap">
+      <label class="field"><span class="pin b">B</span><input id="to" type="search" placeholder="End: a place or click the map" autocomplete="off" aria-label="End"></label>
+      <ul class="sugg" id="suggTo"></ul>
+    </div>
+    <div class="row"><button class="ghost" id="swap" type="button">Swap A and B</button><button class="ghost" id="clear" type="button">Clear</button></div>
+  </section>
+
+  <section aria-label="Example walks">
+    <h2>Try a walk</h2>
+    <div class="presets" id="presets"></div>
+  </section>
+
+  <section class="tradeoff">
+    <h2><label for="alpha">How much to avoid heat</label></h2>
+    <input id="alpha" type="range" min="0" max="6" step="0.5" value="3">
+    <div class="ends"><span>Fastest</span><span>Coolest</span></div>
+  </section>
+
+  <section id="result" aria-live="polite">
+    <p class="empty">Click two points on the map, search for a place, or try one of the walks above.</p>
+  </section>
+
+  <section class="layers">
+    <label><input type="checkbox" id="heat" checked> Show how hot each area runs</label>
+    <div class="legend" aria-hidden="true"></div>
+    <div class="ends"><span>Cooler</span><span>Hotter</span></div>
+  </section>
+
+  <details id="findings" hidden>
+    <summary>What the data shows</summary>
+    <p class="cap" id="findLead" style="margin-top:8px"></p>
+    <div class="cols"><div><h2>Hottest streets</h2><ol id="hotList"></ol></div><div><h2>Coolest streets</h2><ol id="coolList"></ol></div></div>
+  </details>
+
+  <p class="foot" id="foot">Heat comes from satellite surface temperature and vegetation. It shows where streets hold heat, not the air temperature you will feel.</p>
+</aside>
+<div id="map" role="application" aria-label="Map of central Delhi"></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+const C = Object.assign({region:'us-east-1', mapKey:'', apiUrl:'', bbox:[77.19,28.585,77.26,28.668]}, window.COOLWALK || {});
+const PRESETS = [
+  {label:'Chandni Chowk', to:'Connaught Place', a:[77.2303,28.6562], b:[77.2167,28.6315]},
+  {label:'Connaught Place', to:'India Gate', a:[77.2167,28.6315], b:[77.2295,28.6129]},
+  {label:'India Gate', to:'Lodhi Garden', a:[77.2295,28.6129], b:[77.2197,28.5931]},
+];
+const RAMP = [[0,'#58B8A8'],[.35,'#EBD77F'],[.6,'#F2A25C'],[.8,'#D9532C'],[1,'#9B1C1C']];
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const state = {a:null, b:null, mk:{}, alpha:3};
+const center = [(C.bbox[0]+C.bbox[2])/2, (C.bbox[1]+C.bbox[3])/2];
+const inBox = (p) => p[0]>=C.bbox[0] && p[0]<=C.bbox[2] && p[1]>=C.bbox[1] && p[1]<=C.bbox[3];
+
+/* ---------- colour helpers for the heat strip ---------- */
+const hex = (h) => [1,3,5].map((i) => parseInt(h.slice(i,i+2),16));
+function ramp(v){
+  if (v == null) return '#C9D1D6';
+  v = Math.max(0, Math.min(1, v));
+  for (let i = 1; i < RAMP.length; i++){
+    if (v <= RAMP[i][0]){
+      const [a,ca] = RAMP[i-1], [b,cb] = RAMP[i], t = (v-a)/(b-a), pa = hex(ca), pb = hex(cb);
+      return '#' + pa.map((x,k) => Math.round(x+(pb[k]-x)*t).toString(16).padStart(2,'0')).join('');
+    }
+  }
+  return RAMP[RAMP.length-1][1];
+}
+const strip = (profile) => `<div class="strip" role="img" aria-label="Heat along the walk, start to end">${(profile||[]).map((v) => `<i style="background:${ramp(v)}"></i>`).join('')}</div>`;
+
+/* ---------- map ---------- */
+const keyed = (url) => (url.includes('amazonaws.com') && !url.includes('key=')) ? url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(C.mapKey) : url;
+const map = new maplibregl.Map({
+  container: 'map',
+  style: `https://maps.geo.${C.region}.amazonaws.com/v2/styles/Standard/descriptor?key=${encodeURIComponent(C.mapKey)}&color-scheme=Light`,
+  center, zoom: 12.3, attributionControl: {compact: true},
+  transformRequest: (url) => ({url: keyed(url)}),
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-right');
+const pad = () => matchMedia('(max-width:820px)').matches
+  ? {top:40, left:20, right:20, bottom:Math.round(innerHeight*.56)} : {top:60, bottom:60, right:60, left:440};
+map.fitBounds([[C.bbox[0],C.bbox[1]],[C.bbox[2],C.bbox[3]]], {padding: pad(), duration: 0});
+const emptyLine = {type:'Feature', geometry:{type:'LineString', coordinates:[]}};
+
+map.on('error', (e) => { if (e && e.error && /40[13]|Forbidden|Unauthorized/.test(String(e.error.message||e.error))) showError('The map could not load. Check the Amazon Location API key and its allowed referers.'); });
+map.on('load', async () => {
+  try {
+    const grid = await (await fetch('data/heat_grid.geojson')).json();
+    map.addSource('heat', {type:'geojson', data:grid});
+    const firstLabel = map.getStyle().layers.find((l) => l.type === 'symbol');
+    map.addLayer({id:'heat', type:'fill', source:'heat', paint:{
+      'fill-color':['interpolate',['linear'],['get','hs'], ...RAMP.flat()],
+      'fill-opacity':['interpolate',['linear'],['get','hs'], 0,.1, 1,.55]}}, firstLabel && firstLabel.id);
+  } catch (e) { console.warn('Heat layer unavailable', e); $('#heat').closest('section').hidden = true; }
+  for (const [id, color, width, dash] of [['std','#3E4C56',4,[2,1.6]], ['cool','#0E7C66',7,null]]){
+    map.addSource('r-'+id, {type:'geojson', data: emptyLine});
+    map.addLayer({id:'r-'+id+'-case', type:'line', source:'r-'+id, layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':'#fff','line-width':width+4}});
+    map.addLayer({id:'r-'+id, type:'line', source:'r-'+id, layout:{'line-cap': dash ? 'butt':'round','line-join':'round'}, paint:Object.assign({'line-color':color,'line-width':width}, dash ? {'line-dasharray':dash} : {})});
+  }
+  if (state.a && state.b) plan();
+});
+$('#heat').addEventListener('change', (e) => { if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none'); });
+
+/* ---------- points ---------- */
+function setPoint(k, ll, label){
+  state[k] = ll;
+  $(k === 'a' ? '#from' : '#to').value = label || 'Dropped pin';
+  if (!state.mk[k]){
+    const el = document.createElement('div'); el.className = 'mk ' + k; el.textContent = k.toUpperCase();
+    state.mk[k] = new maplibregl.Marker({element: el, draggable: true}).setLngLat(ll).addTo(map);
+    state.mk[k].on('dragend', () => { const p = state.mk[k].getLngLat(); setPoint(k, [p.lng, p.lat], 'Dropped pin'); plan(); });
+  } else state.mk[k].setLngLat(ll);
+}
+map.on('click', (e) => {
+  const p = [e.lngLat.lng, e.lngLat.lat];
+  if (!inBox(p)) return showError('That spot is outside the central Delhi coverage area.');
+  setPoint(state.a ? 'b' : 'a', p);   // first click sets A; later clicks move B
+  plan();
+});
+$('#swap').onclick = () => {
+  if (!state.a || !state.b) return;
+  const [a, b, la, lb] = [state.a, state.b, $('#from').value, $('#to').value];
+  setPoint('a', b, lb); setPoint('b', a, la); plan();
+};
+$('#clear').onclick = () => {
+  for (const k of ['a','b']){ state[k] = null; if (state.mk[k]) { state.mk[k].remove(); delete state.mk[k]; } }
+  $('#from').value = $('#to').value = '';
+  for (const id of ['std','cool']) if (map.getSource('r-'+id)) map.getSource('r-'+id).setData(emptyLine);
+  $('#result').innerHTML = '<p class="empty">Click two points on the map, search for a place, or try one of the walks above.</p>';
+};
+$('#presets').innerHTML = PRESETS.map((p,i) => `<button type="button" data-i="${i}">${esc(p.label)} <span>to ${esc(p.to)}</span></button>`).join('');
+$('#presets').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const p = PRESETS[+b.dataset.i]; setPoint('a', p.a, p.label); setPoint('b', p.b, p.to); plan();
+});
+
+/* ---------- Amazon Location: place search ---------- */
+function debounce(fn, ms){ let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+async function search(q){
+  const r = await fetch(`https://places.geo.${C.region}.amazonaws.com/v2/search-text?key=${encodeURIComponent(C.mapKey)}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({QueryText: q + ' Delhi', BiasPosition: center, MaxResults: 6, Filter:{IncludeCountries:['IND']}})});
+  if (!r.ok) throw new Error('Place search is unavailable right now.');
+  const j = await r.json();
+  return (j.ResultItems || []).filter((x) => x.Position && inBox(x.Position)).map((x) => ({title:x.Title, sub:(x.Address && x.Address.Label) || '', pos:x.Position}));
+}
+function wireSearch(inputId, listId, k){
+  const input = $(inputId), list = $(listId);
+  const run = debounce(async () => {
+    const q = input.value.trim(); list.innerHTML = '';
+    if (q.length < 3) return;
+    try {
+      const items = await search(q);
+      if (!items.length) { list.innerHTML = '<li><button type="button" disabled>No match inside the coverage area</button></li>'; return; }
+      list.innerHTML = items.map((it,i) => `<li><button type="button" data-i="${i}">${esc(it.title)}<small>${esc(it.sub)}</small></button></li>`).join('');
+      list.onclick = (e) => { const b = e.target.closest('button[data-i]'); if (!b) return; const it = items[+b.dataset.i]; list.innerHTML = ''; setPoint(k, it.pos, it.title); map.easeTo({center: it.pos, duration: 400}); plan(); };
+    } catch (e) { list.innerHTML = `<li><button type="button" disabled>${esc(e.message)}</button></li>`; }
+  }, 300);
+  input.addEventListener('input', run);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const b = list.querySelector('button[data-i]'); if (b) b.click(); } if (e.key === 'Escape') list.innerHTML = ''; });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.fieldwrap')) list.innerHTML = ''; });
+}
+wireSearch('#from', '#suggFrom', 'a'); wireSearch('#to', '#suggTo', 'b');
+
+/* ---------- routing ---------- */
+async function api(path, body){
+  const r = await fetch(C.apiUrl + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `The routing service returned an error (${r.status}).`);
+  return j;
+}
+async function awsRoute(a, b){
+  const r = await fetch(`https://routes.geo.${C.region}.amazonaws.com/v2/routes?key=${encodeURIComponent(C.mapKey)}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({Origin:a, Destination:b, TravelMode:'Pedestrian', LegGeometryFormat:'Simple'})});
+  if (!r.ok) throw new Error('Amazon Location route ' + r.status);
+  const route = ((await r.json()).Routes || [])[0];
+  const line = route.Legs.flatMap((l) => l.Geometry.LineString);
+  if (line.length < 2) throw new Error('Empty route');
+  return line;
+}
+let runId = 0; const baseline = new Map();
+async function plan(){
+  if (!state.a || !state.b) return;
+  const me = ++runId, key = state.a + '|' + state.b;
+  busy(); 
+  try {
+    const mine = api('/route', {origin: state.a, destination: state.b, alpha: state.alpha});
+    if (!baseline.has(key)) baseline.set(key, (async () => {
+      try { const line = await awsRoute(state.a, state.b); const s = await api('/score', {line}); return Object.assign(s, {line}); }
+      catch (e) { console.warn('Amazon Location baseline unavailable:', e.message); return null; }
+    })());
+    const [r, aws] = await Promise.all([mine, baseline.get(key)]);
+    if (me === runId) show(r, aws);
+  } catch (e) { if (me === runId) showError(e.message); }
+}
+const pct = (v) => Math.round((v || 0) * 100);
+function show(r, aws){
+  const usable = aws && aws.coverage >= 0.6;
+  const std = usable ? aws : r.shortest;
+  const stdLabel = usable ? 'Standard walk (Amazon Location Service)' : 'Shortest walk';
+  const cool = r.cool;
+  const dMin = Math.round(cool.minutes - std.minutes), dHot = pct(std.hot_share) - pct(cool.hot_share);
+  let verdict;
+  if (dHot < 4) verdict = 'The usual walk is already about as cool as it gets here.';
+  else verdict = `${dMin > 0 ? `${dMin} extra minute${dMin === 1 ? '' : 's'}` : 'No extra time'} cuts your time in high-heat zones from ${pct(std.hot_share)}% to ${pct(cool.hot_share)}% of the walk.`;
+  const notes = [];
+  if (r.snapped.origin_m > 150 || r.snapped.destination_m > 150) notes.push('One point was far from a street, so we used the nearest street.');
+  if (r.alpha_used < state.alpha) notes.push('The cooler route was limited to a reasonable detour.');
+  $('#result').innerHTML = `
+    <p class="verdict">${esc(verdict)}</p>
+    ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
+    <div class="route cool"><h3>CoolWalk</h3>
+      <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
+      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% of the walk in high-heat zones</p></div>
+    <div class="route"><h3>${esc(stdLabel)}</h3>
+      <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
+      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% of the walk in high-heat zones</p></div>`;
+  draw('cool', cool.line); draw('std', usable ? aws.line : r.shortest.line);
+  const all = cool.line.concat(usable ? aws.line : r.shortest.line);
+  const b = all.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(all[0], all[0]));
+  map.fitBounds(b, {padding: pad(), duration: 600, maxZoom: 16});
+}
+function draw(id, line){ const s = map.getSource('r-' + id); if (s) s.setData({type:'Feature', geometry:{type:'LineString', coordinates: line}}); }
+const busy = () => { $('#result').insertAdjacentHTML('afterbegin', '<div class="busy" role="status" aria-label="Finding the coolest walk"></div>'); };
+function showError(msg){ $('#result').innerHTML = `<p class="err" role="alert">${esc(msg)}</p>`; }
+$('#alpha').addEventListener('input', debounce((e) => { state.alpha = +e.target.value; plan(); }, 200));
+
+/* ---------- data story and provenance ---------- */
+fetch('data/findings.json').then((r) => r.json()).then((f) => {
+  $('#findLead').textContent = `${pct(f.hot_share)}% of the ${Math.round(f.network_km)} km of walkable streets in this area sit in high-heat zones.`;
+  const li = (a) => a.slice(0,5).map((x) => `<li>${esc(x.name)}</li>`).join('');
+  $('#hotList').innerHTML = li(f.hottest); $('#coolList').innerHTML = li(f.coolest);
+  $('#findings').hidden = false;
+}).catch(() => {});
+fetch(C.apiUrl + '/health').then((r) => r.json()).then((h) => {
+  const m = h.meta || {};
+  if (m.landsat_date) $('#foot').textContent = `Heat is estimated from Landsat surface temperature (${m.landsat_date}) and Sentinel-2 vegetation (${m.sentinel_date}). It shows where streets hold heat, not the air temperature you will feel. Walking speed is assumed at ${h.walk_speed_mps} m/s.`;
+}).catch(() => {});
+</script>
+</body>
+</html>

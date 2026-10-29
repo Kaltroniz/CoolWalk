@@ -1,0 +1,6 @@
+work/
+.venv/
+__pycache__/
+.aws-sam/
+frontend/config.js
+.env
