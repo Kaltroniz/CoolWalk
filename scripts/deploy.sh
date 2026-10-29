@@ -28,7 +28,9 @@ window.COOLWALK = {
 CFG
 
 aws s3 sync frontend/ "s3://$SITE_BUCKET/" --delete --region "$AWS_REGION"
-aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" >/dev/null
+if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+  aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" >/dev/null || true
+fi
 
 echo
 echo "Site:        $SITE_URL"

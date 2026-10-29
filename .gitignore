@@ -1,5 +1,6 @@
 work/
 .venv/
+cache/
 __pycache__/
 .aws-sam/
 frontend/config.js

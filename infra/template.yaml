@@ -16,42 +16,17 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
 
-  # Private bucket for the website, served only through CloudFront
+  # Website bucket with public website hosting
   SiteBucket:
     Type: AWS::S3::Bucket
     Properties:
+      WebsiteConfiguration:
+        IndexDocument: index.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  SiteOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${AWS::StackName}-oac"
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  Distribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        DefaultRootObject: index.html
-        HttpVersion: http2and3
-        Origins:
-          - Id: site
-            DomainName: !GetAtt SiteBucket.RegionalDomainName
-            S3OriginConfig: { OriginAccessIdentity: "" }
-            OriginAccessControlId: !GetAtt SiteOAC.Id
-        DefaultCacheBehavior:
-          TargetOriginId: site
-          ViewerProtocolPolicy: redirect-to-https
-          Compress: true
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6   # Managed-CachingOptimized
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
 
   SiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -60,13 +35,11 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Effect: Allow
-            Principal: { Service: cloudfront.amazonaws.com }
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
             Action: s3:GetObject
             Resource: !Sub "${SiteBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
 
   RouterFunction:
     Type: AWS::Serverless::Function
@@ -97,8 +70,8 @@ Resources:
         MaxAge: 3600
 
 Outputs:
-  SiteUrl:        { Value: !Sub "https://${Distribution.DomainName}" }
-  DistributionId: { Value: !Ref Distribution }
+  SiteUrl:        { Value: !GetAtt SiteBucket.WebsiteURL }
+  DistributionId: { Value: "" }
   ApiUrl:         { Value: !Sub "https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}" }
   DataBucket:     { Value: !Ref DataBucket }
   SiteBucket:     { Value: !Ref SiteBucket }

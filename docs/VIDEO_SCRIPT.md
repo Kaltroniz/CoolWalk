@@ -1,16 +1,21 @@
 # Video script (target 2:45, hard limit 3:00)
 
-Record the screen with a voice-over. No music, or royalty-free music you have rights to. No third-party logos beyond the app itself. Replace `{{...}}` with numbers from `docs/FINDINGS.md`. Do not say anything you cannot show.
+Record the screen with a voice-over. No copyrighted music, or royalty-free music you have rights to. No third-party logos beyond the app itself. The live demo URL must be visible on screen.
 
 | Time | On screen | Voice-over |
 |---|---|---|
-| 0:00 to 0:20 | The live site, heat layer visible. Slow zoom on Old Delhi. | "In May, central Delhi's streets get very hot. A normal map gives you the shortest walk. It does not tell you which streets hold the heat." |
-| 0:20 to 0:35 | Title: CoolWalk. Pick walk 1 from the examples. | "CoolWalk is a walking map that trades a few minutes for much less time in the heat." |
-| 0:35 to 1:15 | Routes appear. Point at the heat strip under each. | "Here is {{start}} to {{end}}. The standard walk takes {{N}} minutes and spends {{X}} percent of the way in high-heat zones. CoolWalk takes {{M}} minutes and cuts that to {{Y}} percent. The strip shows each stretch of the walk." |
-| 1:15 to 1:40 | Drag the slider from Fastest to Coolest. | "You choose the tradeoff. At the fast end it is the shortest walk. As I move toward cooler, the route moves onto leafier streets." |
-| 1:40 to 2:00 | Search a place, click the map, drag a marker. | "You can search any place, click the map, or drag a pin." |
-| 2:00 to 2:25 | Architecture diagram from the README. | "Landsat surface temperature and Sentinel-2 vegetation score every street. The scores live in an Apache Iceberg table on S3, queried with Athena. A Lambda routes with heat as a cost, and Amazon Location Service provides the map, place search and the standard pedestrian route." |
-| 2:25 to 2:40 | Findings panel. | "Across {{km}} kilometres of streets, {{share}} percent are in high-heat zones. {{Street}} runs hottest, {{Street}} runs coolest." |
-| 2:40 to 2:50 | Footer, then the live URL and repo link. | "The heat map comes from one dated satellite scene, so it shows where streets hold heat, not the air temperature. Change the bounding box and you can map another city. Try it at the link." |
+| **0:00 to 0:20** | The live site, heat layer visible. Slow zoom on Old Delhi. | "In Delhi's summer, streets can reach surface temperatures well over 45 °C. Standard map apps always give you the shortest path. They don't tell you which roads bake in direct sun and which ones have tree shade." |
+| **0:20 to 0:35** | CoolWalk interface. Click preset 1: "Jama Masjid to Delhi Gate". | "CoolWalk is a public web map for central Delhi that trades a few minutes of walking for far less time in dangerous heat." |
+| **0:35 to 1:15** | Both routes appear. Point at the heat strip under each. | "Here is Jama Masjid to Delhi Gate. The standard walk from Amazon Location Service takes 20.5 minutes and spends 80% of the journey in high-heat zones. CoolWalk takes 23.8 minutes — just 3.3 minutes more — and slashes high-heat exposure down to 23.5%. The heat strip under each route compares thermal exposure block by block." |
+| **1:15 to 1:40** | Click preset 2: "Jama Masjid to Raj Ghat", then drag slider from Fastest to Coolest. | "On longer walks like Jama Masjid to Raj Ghat, the standard route has 59% high-heat exposure. CoolWalk drops that to under 10%. With the tradeoff slider, you can tune how aggressively to avoid heat. At Fastest, you get the shortest route; as you slide toward Coolest, the router shifts to leafy, shaded corridors." |
+| **1:40 to 2:00** | Type "Chandni Chowk" into place search, click suggestions, drag pin B. | "You can search any landmark with Amazon Location autocomplete, click any point on the map, or drag pins A and B to recalculate instantly." |
+| **2:00 to 2:25** | Architecture diagram. | "Under the hood, open Landsat 8 thermal infrared and Sentinel-2 vegetation bands score 35,748 street segments. The scored dataset is stored in an Apache Iceberg table on Amazon S3 and queried with Amazon Athena. An AWS Lambda function runs a heat-weighted A* algorithm in under 100 milliseconds, and Amazon Location Service provides the vector map, place search, and standard pedestrian routing." |
+| **2:25 to 2:40** | Open 'What the data shows' details panel. | "Across 2,377 km of walkable streets, 19.8% sit in high-heat zones. Narrow bazaar corridors like Chipwara Khurd and Kinari Bazar reach 46 °C, while shaded avenues like Akbar Road run 5 °C cooler at the surface." |
+| **2:40 to 2:50** | App footer, then full screen showing live URL and repo link. | "Heat data comes from June 2026 satellite observations as a proxy for surface heat. The entire stack is open-source under MIT and can be adapted to any city by changing a bounding box. Try it live at the URL on screen." |
 
-Checklist before upload: under 3 minutes, public visibility, link in the "demo" field, the live URL visible on screen at the end.
+### Checklist before upload
+- [ ] Duration is under 2 minutes 50 seconds (hard limit 3:00).
+- [ ] No copyrighted music or third-party logos.
+- [ ] YouTube or Vimeo set to Public or Unlisted.
+- [ ] Live URL (`http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com`) clearly displayed.
+- [ ] Video URL inserted into AWS Builder Center submission "demo" field.
