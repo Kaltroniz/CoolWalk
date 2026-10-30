@@ -79,7 +79,7 @@ def ndvi(sc, lon, lat):
     for it in sc["sentinel"]["items"]:
         red, nir, scl = Raster(it["red"]), Raster(it["nir"]), Raster(it["scl"])
         r, n, c = red.sample(lon, lat), nir.sample(lon, lat), scl.sample(lon, lat)
-        r = np.where(r > 0, np.clip((r - 1000.0) / 10000.0, 0, None), np.nan)   # L2A BOA offset
+        r = np.where(r > 0, np.clip((r - 1000.0) / 10000.0, 0.01, None), np.nan)   # L2A BOA offset, floored to prevent zero division
         n = np.where(n > 0, np.clip((n - 1000.0) / 10000.0, 0, None), np.nan)
         v = (n - r) / (n + r + 1e-6)
         v[np.isin(np.nan_to_num(c), [0, 1, 3, 8, 9, 10, 11])] = np.nan
@@ -134,7 +134,7 @@ def main():
         if (coords[0][0] - u_xy[0]) ** 2 + (coords[0][1] - u_xy[1]) ** 2 > \
            (coords[-1][0] - u_xy[0]) ** 2 + (coords[-1][1] - u_xy[1]) ** 2:
             coords.reverse()                                          # make geometry run u -> v
-        g_edges.append([index[int(row.u)], index[int(row.v)], float(row.length_m), float(row.heat_index), int(row.edge_id)])
+        g_edges.append([index[int(row.u)], index[int(row.v)], float(row.length_m), float(row.heat_index), int(row.edge_id), float(row.lst_c)])
         g_geoms.append(coords)
     meta = {"bbox": list(config.BBOX), "landsat_date": sc["landsat"]["date"], "landsat_id": sc["landsat"]["id"],
             "sentinel_date": sc["sentinel"]["date"], "weights": {"lst": config.W_LST, "veg": config.W_VEG},

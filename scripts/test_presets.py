@@ -1,20 +1,12 @@
-import os
-import re
 import urllib.request
 import json
 import time
 
-api_url = os.getenv("COOLWALK_API_URL", "")
-if not api_url and os.path.exists("frontend/config.js"):
-    cfg_text = open("frontend/config.js").read()
-    m = re.search(r'apiUrl:\s*["\']([^"\']+)["\']', cfg_text)
-    if m: api_url = m.group(1)
-
-url = f"{api_url}/route"
+url = 'https://euzq1skask.execute-api.us-east-1.amazonaws.com/route'
 presets = [
-  {'label': 'Chandni Chowk to Connaught Place', 'a': [77.2303, 28.6562], 'b': [77.2167, 28.6315]},
-  {'label': 'Connaught Place to India Gate', 'a': [77.2167, 28.6315], 'b': [77.2295, 28.6129]},
-  {'label': 'India Gate to Lodhi Garden', 'a': [77.2295, 28.6129], 'b': [77.2197, 28.5931]},
+  {'label': 'Jama Masjid to Delhi Gate', 'a': [77.2334, 28.6507], 'b': [77.2405, 28.6395]},
+  {'label': 'Jama Masjid to Raj Ghat', 'a': [77.2334, 28.6507], 'b': [77.2485, 28.6405]},
+  {'label': 'Delhi Gate to Lahori Gate', 'a': [77.2405, 28.6395], 'b': [77.2220, 28.6580]},
 ]
 
 for p in presets:
@@ -28,10 +20,11 @@ for p in presets:
             s = res['shortest']
             c = res['cool']
             print(f"=== {p['label']} (took {t1-t0:.2f}s) ===")
-            print(f"Shortest: {s['minutes']} min, {s['length_m']} m, hot_share={s['hot_share']:.1%}")
-            print(f"CoolWalk: {c['minutes']} min, {c['length_m']} m, hot_share={c['hot_share']:.1%}")
+            print(f"Shortest: {s['minutes']} min, {s['length_m']} m, hot_share={s['hot_share']:.1%}, mean_lst={s.get('mean_lst_c')} C")
+            print(f"CoolWalk: {c['minutes']} min, {c['length_m']} m, hot_share={c['hot_share']:.1%}, mean_lst={c.get('mean_lst_c')} C")
             gain = (s['hot_share'] - c['hot_share']) * 100
             diff_m = c['minutes'] - s['minutes']
-            print(f"Avoids: {gain:.1f}% hot-zone exposure for +{diff_m:.1f} min extra walking\n")
+            diff_lst = (s.get('mean_lst_c', 0) - c.get('mean_lst_c', 0))
+            print(f"Avoids: {gain:.1f} percentage points hot exposure for +{diff_m:.1f} min (LST drop: {diff_lst:.1f} C)\n")
     except Exception as e:
         print(f"Error for {p['label']}: {e}\n")

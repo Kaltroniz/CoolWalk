@@ -261,6 +261,9 @@ Resources:
         AllowMethods: [GET, POST, OPTIONS]
         AllowHeaders: [content-type]
         MaxAge: 3600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
 
 Outputs:
   SiteUrl:        { Value: !GetAtt SiteBucket.WebsiteURL }
@@ -1197,19 +1200,20 @@ def make_graph(cols=12, rows=3, hot_row=0, cool_row=2):
             nodes.append([LON0 + c * STEP, LAT0 + r * STEP])
     edges, geoms = [], []
 
-    def add(a, b, heat):
+    def add(a, b, heat, lst):
         for u, v in ((a, b), (b, a)):
             length = app.dist_m(*nodes[u], *nodes[v])
-            edges.append([u, v, length, heat, len(edges)])
+            edges.append([u, v, length, heat, len(edges), lst])
             geoms.append([nodes[u], nodes[v]])
 
     for r in range(rows):
         heat = 0.95 if r == hot_row else (0.05 if r == cool_row else 0.5)
+        lst = 46.0 if r == hot_row else (38.0 if r == cool_row else 42.0)
         for c in range(cols - 1):
-            add(idx[(c, r)], idx[(c + 1, r)], heat)
+            add(idx[(c, r)], idx[(c + 1, r)], heat, lst)
     for c in (0, cols - 1):  # only the two ends connect the streets
         for r in range(rows - 1):
-            add(idx[(c, r)], idx[(c, r + 1)], 0.5)
+            add(idx[(c, r)], idx[(c, r + 1)], 0.5, 42.0)
     meta = {"bbox": [LON0 - 0.001, LAT0 - 0.001, LON0 + cols * STEP, LAT0 + rows * STEP]}
     return app.build({"nodes": nodes, "edges": edges, "geoms": geoms, "meta": meta})
 
@@ -1222,6 +1226,7 @@ def test_alpha_zero_is_shortest():
     m = app.path_metrics(g, p0)
     assert abs(m["length_m"] - 11 * app.dist_m(LON0, LAT0, LON0 + STEP, LAT0)) < 1.0
     assert m["hot_share"] == 1.0  # the direct street is the hot one
+    assert m["mean_lst_c"] == 46.0
 
 
 def test_cool_route_avoids_heat_with_bounded_detour():
@@ -1230,6 +1235,7 @@ def test_cool_route_avoids_heat_with_bounded_detour():
                         "alpha": 3, "max_detour": 1.8})
     assert out["cool"]["hot_share"] < out["shortest"]["hot_share"]
     assert out["cool"]["mean_heat"] < out["shortest"]["mean_heat"]
+    assert out["cool"]["mean_lst_c"] < out["shortest"]["mean_lst_c"]
     assert out["cool"]["length_m"] <= out["shortest"]["length_m"] * 1.8
     assert out["cool"]["minutes"] > out["shortest"]["minutes"]
     assert len(out["cool"]["profile"]) == app.BINS
@@ -1249,6 +1255,7 @@ def test_score_line_matches_streets():
     hot, cool = app.score_line(g, hot_line), app.score_line(g, cool_line)
     assert hot["coverage"] > 0.9 and cool["coverage"] > 0.9
     assert hot["mean_heat"] > 0.9 and cool["mean_heat"] < 0.1
+    assert hot["mean_lst_c"] > cool["mean_lst_c"]
 
 
 def test_validation_errors():
@@ -1441,7 +1448,7 @@ const C = Object.assign({region:'us-east-1', mapKey:'', apiUrl:'', bbox:[77.19,2
 const PRESETS = [
   {label:'Jama Masjid', to:'Delhi Gate', a:[77.2334,28.6507], b:[77.2405,28.6395]},
   {label:'Jama Masjid', to:'Raj Ghat', a:[77.2334,28.6507], b:[77.2485,28.6405]},
-  {label:'Chandni Chowk', to:'Connaught Place', a:[77.2303,28.6562], b:[77.2167,28.6315]},
+  {label:'Delhi Gate', to:'Lahori Gate', a:[77.2405,28.6395], b:[77.2220,28.6580]},
 ];
 const RAMP = [[0,'#58B8A8'],[.35,'#EBD77F'],[.6,'#F2A25C'],[.8,'#D9532C'],[1,'#9B1C1C']];
 const $ = (s) => document.querySelector(s);
@@ -1494,9 +1501,27 @@ map.on('load', async () => {
     map.addLayer({id:'r-'+id+'-case', type:'line', source:'r-'+id, layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':'#fff','line-width':width+4}});
     map.addLayer({id:'r-'+id, type:'line', source:'r-'+id, layout:{'line-cap': dash ? 'butt':'round','line-join':'round'}, paint:Object.assign({'line-color':color,'line-width':width}, dash ? {'line-dasharray':dash} : {})});
   }
+  loadFromHash();
   if (state.a && state.b) plan();
 });
 $('#heat').addEventListener('change', (e) => { if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none'); });
+
+function loadFromHash(){
+  const h = location.hash.replace(/^#/,'') || location.search.replace(/^\?/,'');
+  if (!h) return false;
+  const p = new URLSearchParams(h);
+  const aStr = p.get('a'), bStr = p.get('b'), alStr = p.get('alpha');
+  if (aStr && bStr){
+    const a = aStr.split(',').map(Number), b = bStr.split(',').map(Number);
+    if (a.length === 2 && b.length === 2 && inBox(a) && inBox(b)){
+      if (alStr && !isNaN(+alStr)) { state.alpha = +alStr; $('#alpha').value = state.alpha; }
+      setPoint('a', a, 'Selected start');
+      setPoint('b', b, 'Selected destination');
+      return true;
+    }
+  }
+  return false;
+}
 
 /* ---------- points ---------- */
 function setPoint(k, ll, label){
@@ -1609,11 +1634,12 @@ function show(r, aws){
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
     <div class="route cool"><h3>CoolWalk</h3>
       <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% of the walk in high-heat zones</p></div>
+      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
     <div class="route"><h3>${esc(stdLabel)}</h3>
       <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% of the walk in high-heat zones</p></div>`;
+      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
   draw('cool', cool.line); draw('std', usable ? aws.line : r.shortest.line);
+  try { history.replaceState(null, '', `#a=${state.a[0].toFixed(5)},${state.a[1].toFixed(5)}&b=${state.b[0].toFixed(5)},${state.b[1].toFixed(5)}&alpha=${state.alpha}`); } catch(_){}
   const all = cool.line.concat(usable ? aws.line : r.shortest.line);
   const b = all.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(all[0], all[0]));
   map.fitBounds(b, {padding: pad(), duration: 600, maxZoom: 16});
@@ -1768,8 +1794,8 @@ pairs = [
     ('Delhi Gate', 'Lahori Gate', [77.2405, 28.6395], [77.2220, 28.6580]),
 ]
 
-print(f"{'Walk':<35} | {'Std Source':<15} | {'Std min':<8} | {'Cool min':<8} | {'Std hot':<8} | {'Cool hot':<8} | {'Avoided':<8}")
-print("-" * 105)
+print(f"{'Walk':<35} | {'Std Source':<15} | {'Std min':<8} | {'Cool min':<8} | {'Std hot':<8} | {'Cool hot':<8} | {'Avoid pp':<8} | {'Std LST':<8} | {'Cool LST':<8}")
+print("-" * 125)
 
 for name1, name2, a, b in pairs:
     # 1. CoolWalk API route
@@ -1779,7 +1805,7 @@ for name1, name2, a, b in pairs:
 
     # 2. Amazon Location Route
     aws_url = f"https://routes.geo.us-east-1.amazonaws.com/v2/routes?key={KEY}"
-    aws_req = urllib.request.Request(aws_url, data=json.dumps({'Origin': a, 'Destination': b, 'TravelMode': 'Pedestrian', 'LegGeometryFormat': 'Simple'}).encode(), headers={'Content-Type': 'application/json', 'Referer': 'http://localhost:3000'})
+    aws_req = urllib.request.Request(aws_url, data=json.dumps({'Origin': a, 'Destination': b, 'TravelMode': 'Pedestrian', 'LegGeometryFormat': 'Simple'}).encode(), headers={'Content-Type': 'application/json', 'Referer': 'https://main.d3miw0zrayytbj.amplifyapp.com'})
     std_source = "Amazon Location"
     try:
         aws_resp = json.loads(urllib.request.urlopen(aws_req).read())
@@ -1792,7 +1818,9 @@ for name1, name2, a, b in pairs:
 
     avoided = (std['hot_share'] - c['hot_share']) * 100
     walk_name = f"{name1} to {name2}"
-    print(f"{walk_name:<35} | {std_source:<15} | {std['minutes']:<8.1f} | {c['minutes']:<8.1f} | {std['hot_share']*100:<7.1f}% | {c['hot_share']*100:<7.1f}% | {avoided:<7.1f}%")
+    std_lst = f"{std.get('mean_lst_c', 0):.1f}°C"
+    cool_lst = f"{c.get('mean_lst_c', 0):.1f}°C"
+    print(f"{walk_name:<35} | {std_source:<15} | {std['minutes']:<8.1f} | {c['minutes']:<8.1f} | {std['hot_share']*100:<7.1f}% | {c['hot_share']*100:<7.1f}% | {avoided:<7.1f}pp | {std_lst:<8} | {cool_lst:<8}")
 ```
 
 ### `scripts/find_demo_pairs.py`
@@ -1849,7 +1877,7 @@ OUT = Path('docs/screenshots')
 OUT.mkdir(parents=True, exist_ok=True)
 
 CHROME = os.getenv('CHROME_PATH', 'C:/Program Files/Google/Chrome/Application/chrome.exe')
-SITE_URL = os.getenv('COOLWALK_SITE_URL', 'http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com')
+SITE_URL = os.getenv('COOLWALK_SITE_URL', 'https://main.d3miw0zrayytbj.amplifyapp.com')
 
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, headless=True)
@@ -1903,41 +1931,40 @@ print('All screenshots captured successfully!')
 - Missing temperature share, missing NDVI share: 0.0% LST missing, 0.0% NDVI missing (183,616 points sampled)
 - Temperature range (5th to 95th percentile, C): 40.3 °C to 46.3 °C
 
-## Sanity check: leafy vs dense streets
+## Leafy vs dense streets
 Sample of 10 street segments across central Delhi:
 
 | Street Name | Classification | Surface Temp (LST) | Vegetation (NDVI) | Heat Index (0..1) | Context |
 |---|---|---|---|---|---|
-| **Janpath Lane** | tertiary | 41.6 °C | 1.000 | 0.132 | Tree-lined lane near Janpath |
-| **Akbar Road** | secondary | 41.9 °C | 0.885 | 0.159 | Dense canopy avenue in Lutyens' Delhi |
-| **Teen Murti Haifa Chowk** | secondary | 42.0 °C | 0.861 | 0.170 | Landscaped roundabout near Teen Murti Bhavan |
-| **Teen Murti Marg** | secondary | 42.5 °C | 0.927 | 0.217 | Forested boulevard |
-| **Janpath** | secondary | 43.5 °C | 0.365 | 0.475 | Wide mixed-use boulevard |
-| **Lal Kuan Bazar** | tertiary | 45.4 °C | 0.285 | 0.719 | Dense market street in Old Delhi |
-| **Khari Baoli Road** | tertiary | 46.7 °C | 0.279 | 0.814 | Historic wholesale spice market |
-| **Chandni Chowk** | tertiary | 46.5 °C | 0.235 | 0.843 | Core commercial thoroughfare, high thermal mass |
-| **Nai Sarak** | unclassified | 46.4 °C | 0.209 | 0.860 | Narrow book market corridor |
-| **Chawri Bazar** | tertiary | 46.1 °C | 0.172 | 0.869 | Narrow, high-density metal market street |
+| **Akbar Road** | secondary | 40.6–41.9 °C | 0.885–0.961 | 0.042–0.159 | Dense canopy avenue in Lutyens' Delhi |
+| **Teen Murti Marg** | secondary | 41.0–42.5 °C | 0.927–0.954 | 0.068–0.217 | Forested boulevard |
+| **Janpath Lane** | tertiary | 42.2 °C | 0.935 | 0.192 | Tree-lined lane near Janpath |
+| **Janpath** | secondary | 42.5–43.5 °C | 0.365–0.755 | 0.252–0.475 | Wide mixed-use boulevard |
+| **Lal Kuan Bazar** | tertiary | 45.4–45.6 °C | 0.229–0.285 | 0.719–0.776 | Dense market street in Old Delhi |
+| **Khari Baoli Road** | tertiary | 46.4–46.7 °C | 0.279–0.365 | 0.741–0.814 | Historic wholesale spice market |
+| **Chandni Chowk** | tertiary | 46.2–46.5 °C | 0.235–0.349 | 0.754–0.843 | Core commercial thoroughfare, high thermal mass |
+| **Nai Sarak** | unclassified | 46.4 °C | 0.188–0.209 | 0.860–0.868 | Narrow book market corridor |
+| **Chawri Bazar** | tertiary | 46.1–46.3 °C | 0.169–0.172 | 0.869–0.871 | Narrow, high-density market street |
+| **Kinari Bazar** | unclassified | 46.2 °C | 0.115 | 0.914 | High-density alley in Shahjahanabad |
 
-The sanity check confirms the expected physical pattern: tree-covered avenues register 41–42 °C with high NDVI and low heat scores (0.13–0.22), whereas dense bazaar corridors in Shahjahanabad register 46–47 °C with minimal greenery and extreme heat scores (0.72–0.87).
+The physical contrast is stark: tree-covered avenues register 40.6–41.9 °C with dense canopy (NDVI > 0.88) and low heat scores (0.04–0.16), running about 4 to 5 °C cooler than unshaded asphalt corridors in Shahjahanabad that register 46.1–46.7 °C with minimal greenery (NDVI < 0.25) and extreme heat scores (0.75–0.93).
 
 ## Network
 - Share of street length in high-heat zones (heat index >= 0.66): 19.8% (471.4 km of 2,376.9 km)
-- Hottest streets: Chipwara Khurd (0.934), Gali Ahar (0.918), Kinari Bazar (0.914), Maliwara (0.895), Chipwara Kalan (0.892), Dariba Kalan (0.886), Haidar Quli (0.886)
+- Hottest streets: Chipwara Khurd (heat 0.934, LST 46.1 °C), Gali Ahar (0.918, 46.0 °C), Kinari Bazar (0.914, 46.2 °C), Maliwara (0.895, 46.3 °C), Chipwara Kalan (0.892, 46.4 °C), Dariba Kalan (0.886, 46.2 °C)
 - Coolest streets: Shaded parkways and estate roads in New Delhi / Lutyens' zone (Akbar Road, Lodhi Estate, Teen Murti Marg, heat index 0.00 to 0.22)
 
 ## Demo walks
-| Walk | Standard min | CoolWalk min | Standard hot share | CoolWalk hot share | Source of standard route | Heat avoided |
-|---|---|---|---|---|---|---|
-| **Jama Masjid to Delhi Gate** | 20.5 min | 23.8 min | 80.0% | 23.5% | Amazon Location Service | -56.5% exposure (+3.3 min) |
-| **Jama Masjid to Raj Ghat** | 30.2 min | 35.5 min | 59.0% | 9.5% | Amazon Location Service | -49.5% exposure (+5.3 min) |
-| **Chandni Chowk to Connaught Place** | 47.2 min | 44.7 min | 54.8% | 50.2% | Amazon Location Service | -4.6% exposure (-2.5 min faster) |
-
-*(Note: for Chandni Chowk to Connaught Place, when compared against the pure shortest graph path of 44.3 min with 61.2% hot share, CoolWalk at 44.7 min avoids 11.0% hot exposure for +0.4 min).*
+| Walk | Standard min | CoolWalk min | Standard hot share | CoolWalk hot share | Avoided exposure | Avg Surface Temp (Std vs Cool) | Source of standard route |
+|---|---|---|---|---|---|---|---|
+| **Jama Masjid to Delhi Gate** | 20.5 min | 23.8 min | 80.0% | 23.5% | 56.5 percentage points (70.6% relative cut) | 44.7 °C vs 44.5 °C | Amazon Location Service |
+| **Jama Masjid to Raj Ghat** | 30.2 min | 35.5 min | 59.0% | 9.5% | 49.5 percentage points (83.9% relative cut) | 43.9 °C vs 42.0 °C (-1.9 °C) | Amazon Location Service |
+| **Delhi Gate to Lahori Gate** | 40.2 min | 44.8 min | 90.3% | 15.0% | 75.3 percentage points (83.4% relative cut) | 45.3 °C vs 44.9 °C (-0.4 °C) | Amazon Location Service |
 
 ## Performance and cost
-- Lambda Cold start: 3.12 s
-- Lambda Warm response: 1.03 s (route computation alone is ~50 ms)
+- Lambda routing compute: ~50 ms (pure A* algorithm over 35k segments)
+- Lambda cold start: 3.12 s (decompresses and indexes graph in memory)
+- Lambda warm response: 1.03 s (network roundtrip from Delhi client to us-east-1)
 - Approximate AWS cost so far: < $0.05 total (Athena queries scanned < 5 MB, S3 requests negligible, Lambda within free tier)
 ```
 
@@ -1945,16 +1972,16 @@ The sanity check confirms the expected physical pattern: tree-covered avenues re
 ```markdown
 # CoolWalk: the cooler way to walk across Delhi
 
-**Live map:** http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com | **Video:** [YouTube Demo Link - Human to insert] | **Code:** [GitHub Repository Link] (MIT)
+**Live map:** https://main.d3miw0zrayytbj.amplifyapp.com | **Video:** [YouTube Demo Link - Human to insert] | **Code:** [GitHub Repository Link] (MIT)
 
 ## The problem
 
-Walking directions optimise for distance. In a Delhi summer with temperatures soaring well above 40 °C, the shortest route often runs down a bare, sun-baked asphalt road when a street one block over is leafy and several degrees cooler at the surface. CoolWalk shows that difference, visualises the heat profile under each walking option, and gives pedestrians the cooler choice.
+Walking directions optimize for distance. In a Delhi summer with temperatures soaring well above 40 °C, the shortest route often runs down a bare, sun-baked asphalt road when a street one block over is leafy and several degrees cooler at the surface. CoolWalk shows that difference, visualizes the heat profile under each walking option, and gives pedestrians the cooler choice.
 
 ## The dataset
 
-- **Landsat 8/9 Collection 2 Level-2 surface temperature**, scene `LC08_L2SP_147040_20260609_02_T1` from June 9, 2026, accessed from the USGS Landsat requester-pays bucket in the AWS Registry of Open Data. Cloud cover: **0.0%**. Surface temperature across the study area spans **40.3 °C to 46.3 °C** (5th to 95th percentile).
-- **Sentinel-2 L2A red and near-infrared bands**, from June 7, 2026 (`S2B_43RGM_20260607_0_L2A`), used to compute high-resolution 10 m vegetation index (NDVI).
+- **Landsat 8/9 Collection 2 Level-2 surface temperature**, scene `LC08_L2SP_147040_20260609_02_T1` from June 9, 2026, accessed from the USGS Landsat requester-pays S3 bucket in the AWS Registry of Open Data. Cloud cover: **0.0%**. Surface temperature across the study area spans **40.3 °C to 46.3 °C** (5th to 95th percentile).
+- **Sentinel-2 L2A red and near-infrared bands**, from June 7, 2026 (`S2B_43RGM_20260607_0_L2A`), accessed from AWS Open Data and used to compute high-resolution 10 m vegetation index (NDVI).
 - **OpenStreetMap walking network** for central Delhi: **35,748 street segments** covering **2,376.9 km** of walkable streets and 12,687 intersections.
 
 All data is open and contains no personal information.
@@ -1963,38 +1990,45 @@ All data is open and contains no personal information.
 
 ```mermaid
 flowchart LR
-  L8[Landsat 8/9 surface temperature<br/>S3 open data] --> P[Python pipeline<br/>scores 35k segments]
+  L8[Landsat 8/9 surface temperature<br/>requester-pays S3 bucket] --> P[Python pipeline<br/>scores 35k segments]
   S2[Sentinel-2 NDVI<br/>S3 open data] --> P
   OSM[OpenStreetMap walk network] --> P
   P --> ICE[(Apache Iceberg table<br/>on Amazon S3 via Athena)]
   ICE -->|Athena queries| ASSETS[Heat grid & findings]
   P --> GRAPH[Routing graph on S3]
   GRAPH --> LAM[AWS Lambda<br/>heat-weighted A*]
-  ASSETS --> SITE[Amazon S3 website]
-  LAM <--> API[Amazon API Gateway HTTP API]
-  SITE <--> API
-  SITE --> ALS[Amazon Location Service<br/>maps, place search, routes]
+  ASSETS --> HOST[AWS Amplify Hosting<br/>HTTPS frontend]
+  LAM <--> API[Amazon API Gateway HTTP API<br/>throttled & CORS-enabled]
+  HOST <--> API
+  HOST --> ALS[Amazon Location Service<br/>maps, place search, routes]
 ```
 
 1. **Scoring.** A Python pipeline samples the satellite rasters every 15 m along each street segment (183,616 points sampled, 0.0% missing data) and builds a heat index from normalized surface temperature (60%) and lack of vegetation (40%).
 2. **Iceberg & Athena.** The scored segments are stored as an **Apache Iceberg table on Amazon S3** (`coolwalk.segments`) and queried with **Amazon Athena** to generate the 150 m heat grid layer (2,092 cells) and statistical findings.
-3. **Heat-aware routing.** A **Lambda** function runs an A* algorithm where each street segment costs `length_m * (1 + alpha * heat_index)`, bounded by a maximum detour threshold.
-4. **Location services & frontend.** The single-page application uses **Amazon Location Service (v2)** for the Light style base map, auto-suggest place search, and the baseline pedestrian route. Both the standard route and CoolWalk route are rendered with color-coded heat strips. The site is hosted on **Amazon S3** with public static website hosting and an HTTP API Gateway backend.
+3. **Heat-aware routing.** A **Lambda** function runs an A* algorithm where each street segment costs `length_m * (1 + alpha * heat_index)`, bounded by a maximum detour threshold. The service computes routes in ~50 ms of routing compute and returns both the heat index profile and mean physical surface temperature (`mean_lst_c`).
+4. **Location services & frontend.** The single-page application uses **Amazon Location Service (v2)** for the Light style base map, auto-suggest place search, and the baseline pedestrian route. Both the standard route and CoolWalk route are rendered with color-coded heat strips. The site is deployed with HTTPS via **AWS Amplify Hosting** backed by Amazon S3 and an Amazon API Gateway HTTP API.
 
 ## What you can explore
 
 - Click any two points in central Delhi, search for landmarks (e.g. "India Gate", "Chandni Chowk"), or click the preset walk buttons.
 - Drag the "How much to avoid heat" slider between fastest and coolest.
-- Toggle the heat map layer and inspect the heat strip underneath each route comparing thermal exposure.
+- Toggle the heat map layer and inspect the heat strip underneath each route comparing thermal exposure and average surface temperature.
+- Share walk URLs directly with URL parameters (`#a=lon,lat&b=lon,lat&alpha=...`).
 
 ## What the data shows
 
 - **19.8% of street length** (471.4 km of 2,376.9 km) in central Delhi runs in high-heat zones (heat index >= 0.66).
-- **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones**. CoolWalk takes 23.8 minutes (+3.3 min) but slashes high-heat exposure down to **23.5%** — **avoiding 56.5% of high-heat exposure**.
-- **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones. CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** — **avoiding 49.5% of high-heat exposure**.
-- **Chandni Chowk to Connaught Place:** Connects the historic commercial hub to New Delhi's central plaza. CoolWalk takes 44.7 min with 50.2% heat exposure, compared to 47.2 min and 54.8% heat exposure on the standard pedestrian route.
-- **Hottest streets:** Dense commercial alleys in Shahjahanabad: Chipwara Khurd (heat 0.934), Gali Ahar (0.918), Kinari Bazar (0.914), Maliwara (0.895), Chipwara Kalan (0.892).
-- **Coolest streets:** Tree-lined boulevards in New Delhi: Akbar Road (heat 0.159, LST 41.9 °C, NDVI 0.885), Teen Murti Marg (heat 0.217), Janpath Lane (heat 0.132).
+- **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones** (44.7 °C mean surface temp). CoolWalk takes 23.8 minutes (+3.3 min) but slashes high-heat exposure down to **23.5%** (44.5 °C mean surface temp) — **avoiding 56.5 percentage points of high-heat exposure** (a 70.6% relative reduction).
+- **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones (43.9 °C mean surface temp). CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** while lowering mean surface temperature to **42.0 °C** — **avoiding 49.5 percentage points of high-heat exposure** (an 83.9% relative cut) and dropping average surface temperature by 1.9 °C.
+- **Delhi Gate to Lahori Gate:** The standard pedestrian walk along Netaji Subhash Marg takes 40.2 minutes through dense commercial corridors with **90.3% in high-heat zones** (45.3 °C mean surface temp). CoolWalk takes 44.8 minutes (+4.6 min) and avoids **75.3 percentage points of high-heat exposure**, cutting high-heat time to just **15.0%** (an 83.4% relative cut) and reducing average surface temperature to 44.9 °C.
+- **Hottest streets:** Dense commercial alleys in Shahjahanabad: Chipwara Khurd (heat 0.934, LST 46.1 °C), Kinari Bazar (0.914, 46.2 °C), Maliwara (0.895, 46.3 °C), Chipwara Kalan (0.892, 46.4 °C), and Chandni Chowk (0.754, 46.2 °C).
+- **Coolest streets:** Tree-lined boulevards in New Delhi: Akbar Road (heat 0.042–0.159, LST 40.6–41.9 °C), Teen Murti Marg (heat 0.068–0.217, LST 41.0–42.5 °C), and Janpath Lane (heat 0.192, LST 42.2 °C, NDVI 0.935). Akbar Road runs about 4 to 5 °C cooler than unshaded commercial corridors in Old Delhi.
+
+## Performance and infrastructure
+
+- **Routing latency:** ~50 ms of pure A* routing compute on AWS Lambda (Python 3.12, 2048 MB memory). Client warm roundtrip latency is ~1.0 s; cold start is 3.12 s as the graph index loads from S3.
+- **API security & throttling:** The Amazon API Gateway HTTP API enforces default rate limits (20 req/s, 50 burst) to guard against bot exhaustion. The Amazon Location Service API key is restricted strictly to Maps, Places, and Routes v2 in `us-east-1` with HTTP referer restrictions.
+- **Total run cost:** < $0.05 total (Athena queries scanned < 5 MB, S3 requests negligible, Lambda within free tier).
 
 ## Reuse the pattern
 
@@ -2005,11 +2039,13 @@ To reuse CoolWalk for any other city:
 
 ## Limits, stated plainly
 
-Heat is estimated from single-date pre-monsoon satellite observations (June 2026). It reflects where asphalt and masonry retain surface thermal energy and where canopy cover provides buffering, not real-time ambient air temperature. It does not model momentary wind or microscale building shade geometry. Walking duration assumes a constant 1.35 m/s pace.
+- **Heat index evaluation:** CoolWalk optimizes a composite heat index, and route comparison metrics include that index. To prevent circular evaluation, CoolWalk also calculates and displays physical mean surface temperature (`mean_lst_c`) along every route as an objective thermal measure.
+- **Satellite thermal proxy:** Heat is estimated from pre-monsoon satellite observations (June 2026). It reflects where asphalt and masonry retain surface thermal energy and where canopy cover provides buffering, not real-time ambient air temperature. It does not model momentary wind or microscale building shade geometry.
+- **Routing network:** The network shortest path relies on OpenStreetMap pedestrian network tags. Walking duration assumes a constant 1.35 m/s pace.
 
 ## Data credits
 
-Landsat data courtesy of the U.S. Geological Survey. Contains modified Copernicus Sentinel data. Street data © OpenStreetMap contributors (ODbL). Base map, geocoding and pedestrian routing powered by Amazon Location Service.
+Landsat data courtesy of the U.S. Geological Survey (accessed via AWS Registry of Open Data). Contains modified Copernicus Sentinel data. Street data © OpenStreetMap contributors (ODbL). Base map, geocoding and pedestrian routing powered by Amazon Location Service.
 ```
 
 ### `docs/VIDEO_SCRIPT.md`
@@ -2022,18 +2058,18 @@ Record the screen with a voice-over. No copyrighted music, or royalty-free music
 |---|---|---|
 | **0:00 to 0:20** | The live site, heat layer visible. Slow zoom on Old Delhi. | "In Delhi's summer, streets can reach surface temperatures well over 45 °C. Standard map apps always give you the shortest path. They don't tell you which roads bake in direct sun and which ones have tree shade." |
 | **0:20 to 0:35** | CoolWalk interface. Click preset 1: "Jama Masjid to Delhi Gate". | "CoolWalk is a public web map for central Delhi that trades a few minutes of walking for far less time in dangerous heat." |
-| **0:35 to 1:15** | Both routes appear. Point at the heat strip under each. | "Here is Jama Masjid to Delhi Gate. The standard walk from Amazon Location Service takes 20.5 minutes and spends 80% of the journey in high-heat zones. CoolWalk takes 23.8 minutes — just 3.3 minutes more — and slashes high-heat exposure down to 23.5%. The heat strip under each route compares thermal exposure block by block." |
-| **1:15 to 1:40** | Click preset 2: "Jama Masjid to Raj Ghat", then drag slider from Fastest to Coolest. | "On longer walks like Jama Masjid to Raj Ghat, the standard route has 59% high-heat exposure. CoolWalk drops that to under 10%. With the tradeoff slider, you can tune how aggressively to avoid heat. At Fastest, you get the shortest route; as you slide toward Coolest, the router shifts to leafy, shaded corridors." |
-| **1:40 to 2:00** | Type "Chandni Chowk" into place search, click suggestions, drag pin B. | "You can search any landmark with Amazon Location autocomplete, click any point on the map, or drag pins A and B to recalculate instantly." |
-| **2:00 to 2:25** | Architecture diagram. | "Under the hood, open Landsat 8 thermal infrared and Sentinel-2 vegetation bands score 35,748 street segments. The scored dataset is stored in an Apache Iceberg table on Amazon S3 and queried with Amazon Athena. An AWS Lambda function runs a heat-weighted A* algorithm in under 100 milliseconds, and Amazon Location Service provides the vector map, place search, and standard pedestrian routing." |
-| **2:25 to 2:40** | Open 'What the data shows' details panel. | "Across 2,377 km of walkable streets, 19.8% sit in high-heat zones. Narrow bazaar corridors like Chipwara Khurd and Kinari Bazar reach 46 °C, while shaded avenues like Akbar Road run 5 °C cooler at the surface." |
-| **2:40 to 2:50** | App footer, then full screen showing live URL and repo link. | "Heat data comes from June 2026 satellite observations as a proxy for surface heat. The entire stack is open-source under MIT and can be adapted to any city by changing a bounding box. Try it live at the URL on screen." |
+| **0:35 to 1:15** | Both routes appear. Point at the heat strip and surface temperature under each. | "Here is Jama Masjid to Delhi Gate. The standard walk from Amazon Location Service takes 20.5 minutes and spends 80% of the journey in high-heat zones. CoolWalk takes 23.8 minutes — just 3.3 minutes more — and slashes high-heat exposure down to 23.5%, avoiding 56.5 percentage points of high heat. The heat strip under each route compares thermal exposure block by block." |
+| **1:15 to 1:40** | Click preset 2: "Jama Masjid to Raj Ghat", then preset 3: "Delhi Gate to Lahori Gate". Drag slider from Fastest to Coolest. | "On walks like Jama Masjid to Raj Ghat, CoolWalk cuts high heat from 59% to under 10% and drops mean surface temperature from 43.9 to 42.0 °C. Or Delhi Gate to Lahori Gate, where standard pedestrian routing puts you in high heat for 90% of the walk, and CoolWalk cuts that to 15%. With the tradeoff slider, you can tune how aggressively to avoid heat: at Fastest, you get the shortest route; sliding toward Coolest, the router shifts to leafy, shaded corridors." |
+| **1:40 to 2:00** | Type "Chandni Chowk" into place search, click suggestions, drag pin B. | "You can search any landmark with Amazon Location autocomplete, click any point on the map, or drag pins A and B to recalculate instantly. Every walk also has a direct shareable link." |
+| **2:00 to 2:25** | Architecture diagram. | "Under the hood, open Landsat 8 surface temperature and Sentinel-2 vegetation bands score 35,748 street segments. The scored dataset is stored in an Apache Iceberg table on Amazon S3 and queried with Amazon Athena. An AWS Lambda function computes heat-weighted A* routes in about 50 milliseconds of routing compute, returning both heat exposure and physical surface temperature. Amazon Location Service provides the vector map, place search, and standard pedestrian routing." |
+| **2:25 to 2:40** | Open 'What the data shows' details panel. | "Across 2,377 km of walkable streets, 19.8% sit in high-heat zones. Narrow bazaar corridors like Chipwara Khurd and Kinari Bazar reach 46 °C, while shaded avenues like Akbar Road run about 4 to 5 °C cooler at the surface." |
+| **2:40 to 2:50** | App footer, then full screen showing live URL and repo link. | "Heat data comes from June 2026 satellite observations as an objective proxy for surface heat retention. The entire stack is open-source under MIT, deployed securely with HTTPS on AWS Amplify Hosting, and can be adapted to any city by changing a bounding box. Try it live at the URL on screen." |
 
 ### Checklist before upload
 - [ ] Duration is under 2 minutes 50 seconds (hard limit 3:00).
 - [ ] No copyrighted music or third-party logos.
 - [ ] YouTube or Vimeo set to Public or Unlisted.
-- [ ] Live URL (`http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com`) clearly displayed.
+- [ ] Live URL (`https://main.d3miw0zrayytbj.amplifyapp.com`) clearly displayed.
 - [ ] Video URL inserted into AWS Builder Center submission "demo" field.
 ```
 
@@ -2041,11 +2077,11 @@ Record the screen with a voice-over. No copyrighted music, or royalty-free music
 ```markdown
 # CoolWalk
 
-A walking map for central Delhi that trades a few minutes for much less time in the heat. Pick two points and CoolWalk shows the standard walk next to a cooler one, with a heat strip along each route.
+A walking map for central Delhi that trades a few minutes for much less time in the heat. Pick two points and CoolWalk shows the standard walk next to a cooler one, with a heat strip along each route and the average surface temperature avoided.
 
 Built for the AWS Builder Center "Weekend Challenge: Map It".
 
-**Live demo:** [http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com](http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com)  
+**Live demo:** [https://main.d3miw0zrayytbj.amplifyapp.com](https://main.d3miw0zrayytbj.amplifyapp.com)  
 **Video:** [YouTube Demo Link - Human to insert]
 
 ![CoolWalk Routed Walk](docs/screenshots/02_routed_walk.png)
@@ -2054,24 +2090,25 @@ Built for the AWS Builder Center "Weekend Challenge: Map It".
 
 ```mermaid
 flowchart LR
-  L8[Landsat 8/9 surface temperature<br/>S3 requester-pays] --> P[Python pipeline<br/>scores 35k segments]
+  L8[Landsat 8/9 surface temperature<br/>requester-pays S3 bucket] --> P[Python pipeline<br/>scores 35k segments]
   S2[Sentinel-2 NDVI<br/>S3 open data] --> P
   OSM[OpenStreetMap walk network] --> P
   P --> ICE[(Apache Iceberg table<br/>on Amazon S3 via Athena)]
   ICE -->|Athena queries| ASSETS[Heat grid & findings]
   P --> GRAPH[Routing graph on S3]
   GRAPH --> LAM[AWS Lambda<br/>heat-weighted A*]
-  ASSETS --> SITE[Amazon S3 website]
-  LAM <--> API[Amazon API Gateway HTTP API]
-  SITE <--> API
-  SITE --> ALS[Amazon Location Service<br/>maps, place search, routes]
+  ASSETS --> HOST[AWS Amplify Hosting<br/>HTTPS frontend]
+  LAM <--> API[Amazon API Gateway HTTP API<br/>throttled & CORS-enabled]
+  HOST <--> API
+  HOST --> ALS[Amazon Location Service<br/>maps, place search, routes]
 ```
 
-1. **Data.** Landsat Collection 2 Level-2 surface temperature (`LC08_L2SP_147040_20260609_02_T1`), Sentinel-2 L2A red and near-infrared bands (for vegetation), and the OpenStreetMap walking network. One clear pre-monsoon day (June 2026), shown in the app footer.
-2. **Heat index.** For each street segment: `0.6 x surface temperature + 0.4 x lack of vegetation`, both normalized 0 to 1 across the area. It shows where streets hold heat. It is not air temperature.
+1. **Data.** Landsat Collection 2 Level-2 surface temperature (`LC08_L2SP_147040_20260609_02_T1` from the USGS requester-pays S3 bucket on AWS Open Data), Sentinel-2 L2A red and near-infrared bands (for vegetation), and the OpenStreetMap walking network. One clear pre-monsoon day (June 2026), shown in the app footer.
+2. **Heat index.** For each street segment: `0.6 x surface temperature + 0.4 x lack of vegetation`, both normalized 0 to 1 across the area. It shows where streets hold heat.
 3. **Iceberg and Athena.** Segment scores are stored as an Apache Iceberg table on S3 (`coolwalk.segments`). Athena produces the heat grid layer and statistical findings.
-4. **Routing.** A Lambda runs A* where a segment costs `length x (1 + alpha x heat)`. A detour cap keeps the cooler walk reasonable. The "standard" walk is the Amazon Location Service pedestrian route, scored against the same heat data, with our own shortest path as a fallback.
-5. **Map.** MapLibre on an Amazon Location Service Light basemap. Place search uses Amazon Location Places.
+4. **Routing.** An AWS Lambda function runs A* where a segment costs `length x (1 + alpha x heat)`. The service computes routes in ~50 ms of routing compute, returning both heat exposure and physical surface temperature (`mean_lst_c`). A detour cap keeps the cooler walk reasonable. The "standard" walk is the Amazon Location Service pedestrian route, scored against the same thermal data, with our network shortest path as a fallback.
+5. **Map & Place Search.** MapLibre on an Amazon Location Service Light basemap. Place search uses Amazon Location Places v2 with autocomplete.
+6. **Hosting & Security.** Deployed with full HTTPS on AWS Amplify Hosting, backed by an Amazon API Gateway HTTP API with default rate and burst throttling.
 
 ## Screenshots
 
@@ -2105,11 +2142,9 @@ python pipeline/02_score_segments.py # score every street segment
 python pipeline/03_build_iceberg.py  # Iceberg table via Athena
 python pipeline/04_export_assets.py  # heat grid, findings, router graph
 
-# 4. Sync website assets
-# Windows:
+# 4. Deploy frontend to AWS Amplify (HTTPS)
+# Packages frontend/ and deploys to AWS Amplify Hosting
 powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
-# Linux / macOS:
-./scripts/deploy.sh
 ```
 
 ## Reuse it for your city
@@ -2122,10 +2157,11 @@ To adapt CoolWalk for another city:
 
 ## Known limits
 
-- Heat comes from a dated satellite scene (June 2026). Landsat's thermal band is 100 m native resolution (resampled to 30 m), so we blend it with 10 m Sentinel-2 vegetation to distinguish shaded streets from unshaded ones.
-- Surface temperature is a proxy for how hot a street surface feels underfoot and radiative heat. It ignores momentary wind, humidity, microscale building shade geometry, and time of day.
-- Walking time assumes a constant 1.35 m/s speed everywhere.
-- Coverage is central Delhi (Old Delhi to Lodhi Garden).
+- **Heat index evaluation:** CoolWalk optimizes a heat index and compares routes against that index. To provide an objective physical baseline, CoolWalk also calculates and displays mean surface temperature (`mean_lst_c`) along each route.
+- **Satellite thermal proxy:** Heat comes from a dated satellite scene (June 2026). Landsat's thermal band is 100 m native resolution (resampled to 30 m), so we blend it with 10 m Sentinel-2 vegetation to distinguish shaded streets from unshaded ones.
+- **Surface temperature:** Surface temperature is a proxy for how hot a street surface feels underfoot and radiative heat. It ignores momentary wind, humidity, microscale building shade geometry, and time of day.
+- **Walking pace:** Walking time assumes a constant 1.35 m/s speed everywhere.
+- **Coverage:** Central Delhi (Old Delhi to Lodhi Garden).
 
 ## Data credits
 
@@ -2135,3 +2171,4 @@ Landsat data courtesy of the U.S. Geological Survey. Contains modified Copernicu
 
 MIT.
 ```
+

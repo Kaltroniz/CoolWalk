@@ -1,18 +1,8 @@
-import os
-import re
 import urllib.request
 import json
 
-KEY = os.getenv("MAP_API_KEY", "")
-API = os.getenv("COOLWALK_API_URL", "")
-if not (KEY and API) and os.path.exists("frontend/config.js"):
-    cfg_text = open("frontend/config.js").read()
-    if not KEY:
-        m = re.search(r'mapKey:\s*["\']([^"\']+)["\']', cfg_text)
-        if m: KEY = m.group(1)
-    if not API:
-        m = re.search(r'apiUrl:\s*["\']([^"\']+)["\']', cfg_text)
-        if m: API = m.group(1)
+KEY = 'v1.public.eyJqdGkiOiJmMjE0ODcxZS00NzFkLTQxZDItOTZlNi1lYmU3ZTdiMmJjZWEifWeEYCtJOXjUE20R5AOJbGkKw8kiid1QbPKJ4ibNB-M8BSq18WWfZ3RElVvNsHpN50VSYosqgQTJhQFtA_ASdVOnPcAFYvE2A8yPj3PmH42KY1JlIko_MHvEP7CZDuT8awXnLIzNDEk4t76uUiEy12mRjugyX5aEO6milL42yBdOQ_SJZd2zyAskDoCEolPUTtDh8SDNhUgXHfnjL05_mDr0F51RzNnambeor_Z5LMGcI8TnIhjm37duYGCuEBdj8JlrzjSZ4MFv4jiNXVqOrh3c6iEYejU_Ju6olZ6To4tfBuIsmMRc4HSxCEMEwwYAhlV8iYfS0T5CqlBo5ZecsG0.ZWU0ZWIzMTktMWRhNi00Mzg0LTllMzYtNzlmMDU3MjRmYTkx'
+API = 'https://euzq1skask.execute-api.us-east-1.amazonaws.com'
 
 pairs = [
     ('Chandni Chowk', 'Connaught Place', [77.2303, 28.6562], [77.2167, 28.6315]),
@@ -22,8 +12,8 @@ pairs = [
     ('Delhi Gate', 'Lahori Gate', [77.2405, 28.6395], [77.2220, 28.6580]),
 ]
 
-print(f"{'Walk':<35} | {'Std Source':<15} | {'Std min':<8} | {'Cool min':<8} | {'Std hot':<8} | {'Cool hot':<8} | {'Avoided':<8}")
-print("-" * 105)
+print(f"{'Walk':<35} | {'Std Source':<15} | {'Std min':<8} | {'Cool min':<8} | {'Std hot':<8} | {'Cool hot':<8} | {'Avoid pp':<8} | {'Std LST':<8} | {'Cool LST':<8}")
+print("-" * 125)
 
 for name1, name2, a, b in pairs:
     # 1. CoolWalk API route
@@ -33,7 +23,7 @@ for name1, name2, a, b in pairs:
 
     # 2. Amazon Location Route
     aws_url = f"https://routes.geo.us-east-1.amazonaws.com/v2/routes?key={KEY}"
-    aws_req = urllib.request.Request(aws_url, data=json.dumps({'Origin': a, 'Destination': b, 'TravelMode': 'Pedestrian', 'LegGeometryFormat': 'Simple'}).encode(), headers={'Content-Type': 'application/json', 'Referer': 'http://localhost:3000'})
+    aws_req = urllib.request.Request(aws_url, data=json.dumps({'Origin': a, 'Destination': b, 'TravelMode': 'Pedestrian', 'LegGeometryFormat': 'Simple'}).encode(), headers={'Content-Type': 'application/json', 'Referer': 'https://main.d3miw0zrayytbj.amplifyapp.com'})
     std_source = "Amazon Location"
     try:
         aws_resp = json.loads(urllib.request.urlopen(aws_req).read())
@@ -46,5 +36,6 @@ for name1, name2, a, b in pairs:
 
     avoided = (std['hot_share'] - c['hot_share']) * 100
     walk_name = f"{name1} to {name2}"
-    print(f"{walk_name:<35} | {std_source:<15} | {std['minutes']:<8.1f} | {c['minutes']:<8.1f} | {std['hot_share']*100:<7.1f}% | {c['hot_share']*100:<7.1f}% | {avoided:<7.1f}%")
-
+    std_lst = f"{std.get('mean_lst_c', 0):.1f}°C"
+    cool_lst = f"{c.get('mean_lst_c', 0):.1f}°C"
+    print(f"{walk_name:<35} | {std_source:<15} | {std['minutes']:<8.1f} | {c['minutes']:<8.1f} | {std['hot_share']*100:<7.1f}% | {c['hot_share']*100:<7.1f}% | {avoided:<7.1f}pp | {std_lst:<8} | {cool_lst:<8}")

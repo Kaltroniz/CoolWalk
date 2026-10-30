@@ -1,4 +1,3 @@
-import os
 import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -6,8 +5,8 @@ from playwright.sync_api import sync_playwright
 OUT = Path('docs/screenshots')
 OUT.mkdir(parents=True, exist_ok=True)
 
-CHROME = os.getenv('CHROME_PATH', 'C:/Program Files/Google/Chrome/Application/chrome.exe')
-SITE_URL = os.getenv('COOLWALK_SITE_URL', 'http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com')
+CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+SITE_URL = 'https://main.d3miw0zrayytbj.amplifyapp.com'
 
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, headless=True)
@@ -44,4 +43,3 @@ with sync_playwright() as p:
     browser.close()
 
 print('All screenshots captured successfully!')
-

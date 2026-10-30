@@ -1,10 +1,10 @@
 # CoolWalk
 
-A walking map for central Delhi that trades a few minutes for much less time in the heat. Pick two points and CoolWalk shows the standard walk next to a cooler one, with a heat strip along each route.
+A walking map for central Delhi that trades a few minutes for much less time in the heat. Pick two points and CoolWalk shows the standard walk next to a cooler one, with a heat strip along each route and the average surface temperature avoided.
 
 Built for the AWS Builder Center "Weekend Challenge: Map It".
 
-**Live demo:** [http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com](http://coolwalk-sitebucket-5r7fgk6zuvfl.s3-website-us-east-1.amazonaws.com)  
+**Live demo:** [https://main.d3miw0zrayytbj.amplifyapp.com](https://main.d3miw0zrayytbj.amplifyapp.com)  
 **Video:** [YouTube Demo Link - Human to insert]
 
 ![CoolWalk Routed Walk](docs/screenshots/02_routed_walk.png)
@@ -13,24 +13,25 @@ Built for the AWS Builder Center "Weekend Challenge: Map It".
 
 ```mermaid
 flowchart LR
-  L8[Landsat 8/9 surface temperature<br/>S3 requester-pays] --> P[Python pipeline<br/>scores 35k segments]
+  L8[Landsat 8/9 surface temperature<br/>requester-pays S3 bucket] --> P[Python pipeline<br/>scores 35k segments]
   S2[Sentinel-2 NDVI<br/>S3 open data] --> P
   OSM[OpenStreetMap walk network] --> P
   P --> ICE[(Apache Iceberg table<br/>on Amazon S3 via Athena)]
   ICE -->|Athena queries| ASSETS[Heat grid & findings]
   P --> GRAPH[Routing graph on S3]
   GRAPH --> LAM[AWS Lambda<br/>heat-weighted A*]
-  ASSETS --> SITE[Amazon S3 website]
-  LAM <--> API[Amazon API Gateway HTTP API]
-  SITE <--> API
-  SITE --> ALS[Amazon Location Service<br/>maps, place search, routes]
+  ASSETS --> HOST[AWS Amplify Hosting<br/>HTTPS frontend]
+  LAM <--> API[Amazon API Gateway HTTP API<br/>throttled & CORS-enabled]
+  HOST <--> API
+  HOST --> ALS[Amazon Location Service<br/>maps, place search, routes]
 ```
 
-1. **Data.** Landsat Collection 2 Level-2 surface temperature (`LC08_L2SP_147040_20260609_02_T1`), Sentinel-2 L2A red and near-infrared bands (for vegetation), and the OpenStreetMap walking network. One clear pre-monsoon day (June 2026), shown in the app footer.
-2. **Heat index.** For each street segment: `0.6 x surface temperature + 0.4 x lack of vegetation`, both normalized 0 to 1 across the area. It shows where streets hold heat. It is not air temperature.
+1. **Data.** Landsat Collection 2 Level-2 surface temperature (`LC08_L2SP_147040_20260609_02_T1` from the USGS requester-pays S3 bucket on AWS Open Data), Sentinel-2 L2A red and near-infrared bands (for vegetation), and the OpenStreetMap walking network. One clear pre-monsoon day (June 2026), shown in the app footer.
+2. **Heat index.** For each street segment: `0.6 x surface temperature + 0.4 x lack of vegetation`, both normalized 0 to 1 across the area. It shows where streets hold heat.
 3. **Iceberg and Athena.** Segment scores are stored as an Apache Iceberg table on S3 (`coolwalk.segments`). Athena produces the heat grid layer and statistical findings.
-4. **Routing.** A Lambda runs A* where a segment costs `length x (1 + alpha x heat)`. A detour cap keeps the cooler walk reasonable. The "standard" walk is the Amazon Location Service pedestrian route, scored against the same heat data, with our own shortest path as a fallback.
-5. **Map.** MapLibre on an Amazon Location Service Light basemap. Place search uses Amazon Location Places.
+4. **Routing.** An AWS Lambda function runs A* where a segment costs `length x (1 + alpha x heat)`. The service computes routes in ~50 ms of routing compute, returning both heat exposure and physical surface temperature (`mean_lst_c`). A detour cap keeps the cooler walk reasonable. The "standard" walk is the Amazon Location Service pedestrian route, scored against the same thermal data, with our network shortest path as a fallback.
+5. **Map & Place Search.** MapLibre on an Amazon Location Service Light basemap. Place search uses Amazon Location Places v2 with autocomplete.
+6. **Hosting & Security.** Deployed with full HTTPS on AWS Amplify Hosting, backed by an Amazon API Gateway HTTP API with default rate and burst throttling.
 
 ## Screenshots
 
@@ -64,11 +65,9 @@ python pipeline/02_score_segments.py # score every street segment
 python pipeline/03_build_iceberg.py  # Iceberg table via Athena
 python pipeline/04_export_assets.py  # heat grid, findings, router graph
 
-# 4. Sync website assets
-# Windows:
+# 4. Deploy frontend to AWS Amplify (HTTPS)
+# Packages frontend/ and deploys to AWS Amplify Hosting
 powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
-# Linux / macOS:
-./scripts/deploy.sh
 ```
 
 ## Reuse it for your city
@@ -81,10 +80,11 @@ To adapt CoolWalk for another city:
 
 ## Known limits
 
-- Heat comes from a dated satellite scene (June 2026). Landsat's thermal band is 100 m native resolution (resampled to 30 m), so we blend it with 10 m Sentinel-2 vegetation to distinguish shaded streets from unshaded ones.
-- Surface temperature is a proxy for how hot a street surface feels underfoot and radiative heat. It ignores momentary wind, humidity, microscale building shade geometry, and time of day.
-- Walking time assumes a constant 1.35 m/s speed everywhere.
-- Coverage is central Delhi (Old Delhi to Lodhi Garden).
+- **Heat index evaluation:** CoolWalk optimizes a heat index and compares routes against that index. To provide an objective physical baseline, CoolWalk also calculates and displays mean surface temperature (`mean_lst_c`) along each route.
+- **Satellite thermal proxy:** Heat comes from a dated satellite scene (June 2026). Landsat's thermal band is 100 m native resolution (resampled to 30 m), so we blend it with 10 m Sentinel-2 vegetation to distinguish shaded streets from unshaded ones.
+- **Surface temperature:** Surface temperature is a proxy for how hot a street surface feels underfoot and radiative heat. It ignores momentary wind, humidity, microscale building shade geometry, and time of day.
+- **Walking pace:** Walking time assumes a constant 1.35 m/s speed everywhere.
+- **Coverage:** Central Delhi (Old Delhi to Lodhi Garden).
 
 ## Data credits
 

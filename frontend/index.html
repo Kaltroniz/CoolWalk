@@ -141,7 +141,7 @@ const C = Object.assign({region:'us-east-1', mapKey:'', apiUrl:'', bbox:[77.19,2
 const PRESETS = [
   {label:'Jama Masjid', to:'Delhi Gate', a:[77.2334,28.6507], b:[77.2405,28.6395]},
   {label:'Jama Masjid', to:'Raj Ghat', a:[77.2334,28.6507], b:[77.2485,28.6405]},
-  {label:'Chandni Chowk', to:'Connaught Place', a:[77.2303,28.6562], b:[77.2167,28.6315]},
+  {label:'Delhi Gate', to:'Lahori Gate', a:[77.2405,28.6395], b:[77.2220,28.6580]},
 ];
 const RAMP = [[0,'#58B8A8'],[.35,'#EBD77F'],[.6,'#F2A25C'],[.8,'#D9532C'],[1,'#9B1C1C']];
 const $ = (s) => document.querySelector(s);
@@ -194,9 +194,27 @@ map.on('load', async () => {
     map.addLayer({id:'r-'+id+'-case', type:'line', source:'r-'+id, layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':'#fff','line-width':width+4}});
     map.addLayer({id:'r-'+id, type:'line', source:'r-'+id, layout:{'line-cap': dash ? 'butt':'round','line-join':'round'}, paint:Object.assign({'line-color':color,'line-width':width}, dash ? {'line-dasharray':dash} : {})});
   }
+  loadFromHash();
   if (state.a && state.b) plan();
 });
 $('#heat').addEventListener('change', (e) => { if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none'); });
+
+function loadFromHash(){
+  const h = location.hash.replace(/^#/,'') || location.search.replace(/^\?/,'');
+  if (!h) return false;
+  const p = new URLSearchParams(h);
+  const aStr = p.get('a'), bStr = p.get('b'), alStr = p.get('alpha');
+  if (aStr && bStr){
+    const a = aStr.split(',').map(Number), b = bStr.split(',').map(Number);
+    if (a.length === 2 && b.length === 2 && inBox(a) && inBox(b)){
+      if (alStr && !isNaN(+alStr)) { state.alpha = +alStr; $('#alpha').value = state.alpha; }
+      setPoint('a', a, 'Selected start');
+      setPoint('b', b, 'Selected destination');
+      return true;
+    }
+  }
+  return false;
+}
 
 /* ---------- points ---------- */
 function setPoint(k, ll, label){
@@ -309,11 +327,12 @@ function show(r, aws){
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
     <div class="route cool"><h3>CoolWalk</h3>
       <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% of the walk in high-heat zones</p></div>
+      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
     <div class="route"><h3>${esc(stdLabel)}</h3>
       <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% of the walk in high-heat zones</p></div>`;
+      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
   draw('cool', cool.line); draw('std', usable ? aws.line : r.shortest.line);
+  try { history.replaceState(null, '', `#a=${state.a[0].toFixed(5)},${state.a[1].toFixed(5)}&b=${state.b[0].toFixed(5)},${state.b[1].toFixed(5)}&alpha=${state.alpha}`); } catch(_){}
   const all = cool.line.concat(usable ? aws.line : r.shortest.line);
   const b = all.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(all[0], all[0]));
   map.fitBounds(b, {padding: pad(), duration: 600, maxZoom: 16});
