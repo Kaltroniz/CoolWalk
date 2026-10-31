@@ -1212,16 +1212,16 @@ FROM coolwalk.segments GROUP BY 1, 2
 
 ```sql
 SELECT round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 4) AS hot_share,
-       round(sum(length_m) / 1000, 1) AS network_km,
+       round(sum(length_m) / 2000, 1) AS network_km,
        round(approx_percentile(lst_c, 0.05), 1) AS lst_p05_c,
        round(approx_percentile(lst_c, 0.95), 1) AS lst_p95_c
-FROM coolwalk.segments
+FROM coolwalk.segments;
 ```
 
 ## `pipeline/sql/q_hottest_streets.sql`
 
 ```sql
-SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
+SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m) / 2) AS length_m,
        round(avg(lst_c), 1) AS lst_c, round(max_by(mid_lon, length_m), 5) AS lon, round(max_by(mid_lat, length_m), 5) AS lat
 FROM coolwalk.segments
 WHERE name IS NOT NULL AND name <> '' AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
@@ -1232,12 +1232,41 @@ ORDER BY heat DESC LIMIT 8;
 ## `pipeline/sql/q_coolest_streets.sql`
 
 ```sql
-SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
+SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m) / 2) AS length_m,
        round(avg(lst_c), 1) AS lst_c, round(max_by(mid_lon, length_m), 5) AS lon, round(max_by(mid_lat, length_m), 5) AS lat
 FROM coolwalk.segments
 WHERE name IS NOT NULL AND name <> '' AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
 GROUP BY name HAVING sum(length_m) > 500
 ORDER BY heat ASC LIMIT 8;
+```
+
+## `pipeline/sql/q_shade_priority.sql`
+
+```sql
+SELECT
+  s.name AS corridor,
+  round(avg(s.lst_c), 1) AS avg_surface_c,
+  round(avg(s.heat_index), 2) AS avg_heat_index,
+  round(sum(s.length_m) / 2) AS total_hot_m,
+  count(distinct case when p.kind = 'bus_stop' then p.place_id end) AS bus_stops,
+  count(distinct case when p.kind = 'school' then p.place_id end) AS schools,
+  count(distinct case when p.kind = 'hospital' then p.place_id end) AS hospitals,
+  round(arbitrary(s.mid_lon), 5) AS lon,
+  round(arbitrary(s.mid_lat), 5) AS lat
+FROM coolwalk.segments s
+JOIN coolwalk.places p
+  ON p.kind IN ('bus_stop', 'school', 'hospital')
+ AND abs(s.mid_lat - p.lat) <= 0.0013
+ AND abs(s.mid_lon - p.lon) <= 0.0015
+ AND sqrt(power((s.mid_lon - p.lon) * 111320.0 * 0.878, 2) + power((s.mid_lat - p.lat) * 110540.0, 2)) <= 150.0
+WHERE s.name IS NOT NULL AND s.name != '' AND s.heat_index >= 0.66
+GROUP BY s.name
+HAVING count(distinct case when p.kind IN ('bus_stop', 'school', 'hospital') then p.place_id end) > 0
+ORDER BY (count(distinct case when p.kind = 'school' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'hospital' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'bus_stop' then p.place_id end) * 2) DESC,
+         total_hot_m DESC
+LIMIT 20;
 ```
 
 ## `pipeline/03_build_iceberg.py`
@@ -1340,8 +1369,11 @@ if __name__ == "__main__":
 
   frontend/data/heat_grid.geojson   150 m heat cells for the map layer
   frontend/data/findings.json       hottest / coolest streets and the share of hot streets
+  frontend/data/shade_priority.json civic planner high-heat corridors
+  frontend/data/shade_priority.csv  civic planner high-heat corridors CSV
   s3://BUCKET/router/graph.json.gz  routing graph for the Lambda
 """
+import csv
 import importlib
 import json
 import sys
@@ -1378,6 +1410,15 @@ def main():
     (config.FRONT_DATA / "heat_grid.geojson").write_text(
         json.dumps({"type": "FeatureCollection", "features": feats}, separators=(",", ":")))
 
+    # Load existing findings to preserve place_exposure if present
+    findings_path = config.FRONT_DATA / "findings.json"
+    existing_findings = {}
+    if findings_path.exists():
+        try:
+            existing_findings = json.loads(findings_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
     share = query("q_hot_share.sql")[0]
     findings = {
         "hot_share": float(share["hot_share"]), "network_km": float(share["network_km"]),
@@ -1389,13 +1430,225 @@ def main():
                      "length_m": float(r["length_m"]), "lon": float(r["lon"]), "lat": float(r["lat"])}
                     for r in query("q_coolest_streets.sql")],
     }
-    (config.FRONT_DATA / "findings.json").write_text(json.dumps(findings, indent=2))
+    if "place_exposure" in existing_findings:
+        findings["place_exposure"] = existing_findings["place_exposure"]
+
+    findings_path.write_text(json.dumps(findings, indent=2))
+
+    # Shade priority export (A2)
+    try:
+        shade_rows = query("q_shade_priority.sql")
+        shade_data = []
+        for r in shade_rows:
+            shade_data.append({
+                "corridor": r["corridor"],
+                "avg_surface_c": float(r["avg_surface_c"]),
+                "avg_heat_index": float(r["avg_heat_index"]),
+                "total_hot_m": int(float(r["total_hot_m"])),
+                "bus_stops": int(r["bus_stops"]),
+                "schools": int(r["schools"]),
+                "hospitals": int(r["hospitals"]),
+                "lon": float(r["lon"]),
+                "lat": float(r["lat"]),
+            })
+        (config.FRONT_DATA / "shade_priority.json").write_text(json.dumps(shade_data, indent=2), encoding="utf-8")
+        
+        csv_path = config.FRONT_DATA / "shade_priority.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Corridor", "Avg Surface Temp (°C)", "Avg Heat Index", "Hot Segment Length (m)", "Bus Stops", "Schools", "Hospitals/Clinics", "Longitude", "Latitude"])
+            for r in shade_data:
+                writer.writerow([r["corridor"], r["avg_surface_c"], r["avg_heat_index"], r["total_hot_m"], r["bus_stops"], r["schools"], r["hospitals"], r["lon"], r["lat"]])
+        print(f"Wrote {len(shade_data)} shade priority corridors to JSON and CSV.")
+    except Exception as e:
+        print(f"Note: Shade priority query error: {e}")
 
     ath.s3.upload_file(str(config.WORK / "graph.json.gz"), config.BUCKET, "router/graph.json.gz")
     print(f"Wrote {len(feats):,} heat cells, findings.json, and uploaded router/graph.json.gz")
-    print(f"{findings['hot_share']:.1%} of street length is in high-heat zones.")
+    print(f"{findings['hot_share']:.1%} of street length ({findings['network_km']} km total) is in high-heat zones.")
     print("Hottest:", ", ".join(h["name"] for h in findings["hottest"][:3]))
     print("Coolest:", ", ".join(c["name"] for c in findings["coolest"][:3]))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## `pipeline/08_shade_priority.py`
+
+```python
+"""Step 8. Civic planner view - Where shade matters most.
+
+Queries Amazon Athena / Apache Iceberg tables to find the highest-priority
+walking corridors needing shade canopy, ranked by thermal exposure (heat >= 0.66)
+and proximity (within 150m) to vulnerable civic facilities (schools, clinics/hospitals, bus stops).
+
+Outputs:
+  frontend/data/shade_priority.csv
+  frontend/data/shade_priority.json
+"""
+import csv
+import json
+import math
+import sys
+from pathlib import Path
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "pipeline"))
+import config
+import importlib
+
+ath = importlib.import_module("03_build_iceberg")
+
+SQL_ATHENA = """
+SELECT
+  s.name AS corridor,
+  round(avg(s.lst_c), 1) AS avg_surface_c,
+  round(avg(s.heat_index), 2) AS avg_heat_index,
+  round(sum(s.length_m) / 2) AS total_hot_m,
+  count(distinct case when p.kind = 'bus_stop' then p.place_id end) AS bus_stops,
+  count(distinct case when p.kind = 'school' then p.place_id end) AS schools,
+  count(distinct case when p.kind = 'hospital' then p.place_id end) AS hospitals,
+  round(arbitrary(s.mid_lon), 5) AS lon,
+  round(arbitrary(s.mid_lat), 5) AS lat
+FROM coolwalk.segments s
+JOIN coolwalk.places p
+  ON p.kind IN ('bus_stop', 'school', 'hospital')
+ AND abs(s.mid_lat - p.lat) <= 0.0013
+ AND abs(s.mid_lon - p.lon) <= 0.0015
+ AND sqrt(power((s.mid_lon - p.lon) * 111320.0 * 0.878, 2) + power((s.mid_lat - p.lat) * 110540.0, 2)) <= 150.0
+WHERE s.name IS NOT NULL AND s.name != '' AND s.heat_index >= 0.66
+GROUP BY s.name
+HAVING count(distinct case when p.kind IN ('bus_stop', 'school', 'hospital') then p.place_id end) > 0
+ORDER BY (count(distinct case when p.kind = 'school' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'hospital' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'bus_stop' then p.place_id end) * 2) DESC,
+         total_hot_m DESC
+LIMIT 20
+"""
+
+
+def compute_from_parquet():
+    """Fallback if Athena is unreachable: exact same spatial logic using local parquet files."""
+    seg_file = config.WORK / "segments.parquet"
+    places_file = config.WORK / "places.parquet"
+    if not seg_file.exists() or not places_file.exists():
+        raise RuntimeError("Missing segments.parquet or places.parquet in work/")
+
+    df_seg = pd.read_parquet(seg_file)
+    df_places = pd.read_parquet(places_file)
+
+    # Filter hot segments with names
+    hot = df_seg[(df_seg["heat_index"] >= 0.66) & (df_seg["name"].str.strip().str.len() > 0)].copy()
+    civic = df_places[df_places["kind"].isin(["bus_stop", "school", "hospital"])].copy()
+
+    records = []
+    # Group by name
+    for name, group in hot.groupby("name"):
+        tot_m = group["length_m"].sum() / 2
+        avg_lst = round(float(group["lst_c"].mean()), 1)
+        avg_h = round(float(group["heat_index"].mean()), 2)
+        rep_lon = round(float(group["mid_lon"].iloc[0]), 5)
+        rep_lat = round(float(group["mid_lat"].iloc[0]), 5)
+
+        # Match facilities within 150m of any segment midpoint in group
+        matched_places = set()
+        for _, s_row in group.iterrows():
+            slon, slat = s_row["mid_lon"], s_row["mid_lat"]
+            box = civic[
+                (civic["lat"].between(slat - 0.0013, slat + 0.0013)) &
+                (civic["lon"].between(slon - 0.0015, slon + 0.0015))
+            ]
+            for _, p_row in box.iterrows():
+                plon, plat = p_row["lon"], p_row["lat"]
+                d = math.hypot((plon - slon) * 111320.0 * 0.878, (plat - slat) * 110540.0)
+                if d <= 150.0:
+                    matched_places.add((p_row["place_id"], p_row["kind"]))
+
+        if not matched_places:
+            continue
+
+        b_count = sum(1 for _, k in matched_places if k == "bus_stop")
+        s_count = sum(1 for _, k in matched_places if k == "school")
+        h_count = sum(1 for _, k in matched_places if k == "hospital")
+        score = s_count * 3 + h_count * 3 + b_count * 2
+
+        records.append({
+            "corridor": name,
+            "avg_surface_c": avg_lst,
+            "avg_heat_index": avg_h,
+            "total_hot_m": round(tot_m),
+            "bus_stops": b_count,
+            "schools": s_count,
+            "hospitals": h_count,
+            "score": score,
+            "lon": rep_lon,
+            "lat": rep_lat,
+        })
+
+    records.sort(key=lambda r: (r["score"], r["total_hot_m"]), reverse=True)
+    return records[:20]
+
+
+def main():
+    print("Running shade priority analysis...")
+    data = None
+    try:
+        print("Querying Amazon Athena (coolwalk.segments JOIN coolwalk.places)...")
+        qid = ath.run(SQL_ATHENA.strip(), config.DB)
+        raw_rows = ath.rows(qid)
+        data = []
+        for r in raw_rows:
+            data.append({
+                "corridor": r["corridor"],
+                "avg_surface_c": float(r["avg_surface_c"]),
+                "avg_heat_index": float(r["avg_heat_index"]),
+                "total_hot_m": int(float(r["total_hot_m"])),
+                "bus_stops": int(r["bus_stops"]),
+                "schools": int(r["schools"]),
+                "hospitals": int(r["hospitals"]),
+                "lon": float(r["lon"]),
+                "lat": float(r["lat"]),
+            })
+        print(f"Athena returned {len(data)} corridors.")
+    except Exception as e:
+        print(f"Athena query note: {e}. Falling back to exact local parquet computation...")
+        data = compute_from_parquet()
+        print(f"Computed {len(data)} corridors from parquet.")
+
+    # Save to frontend/data/
+    out_dir = ROOT / "frontend" / "data"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    csv_path = out_dir / "shade_priority.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Corridor", "Avg Surface Temp (°C)", "Avg Heat Index", "Hot Segment Length (m)", "Bus Stops", "Schools", "Hospitals/Clinics", "Longitude", "Latitude"])
+        for r in data:
+            writer.writerow([
+                r["corridor"],
+                f"{r['avg_surface_c']:.1f}",
+                f"{r['avg_heat_index']:.2f}",
+                r["total_hot_m"],
+                r["bus_stops"],
+                r["schools"],
+                r["hospitals"],
+                r["lon"],
+                r["lat"],
+            ])
+    print(f"Wrote {csv_path}")
+
+    json_path = out_dir / "shade_priority.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    print(f"Wrote {json_path}")
+
+    print("\n--- TOP PRIORITY CORRIDORS FOR CIVIC SHADE INTERVENTION ---")
+    print(f"{'Corridor':<30} | {'Hot (m)':<8} | {'Avg °C':<7} | {'Schools':<8} | {'Hospitals':<10} | {'Bus Stops':<9}")
+    print("-" * 85)
+    for r in data[:10]:
+        print(f"{r['corridor']:<30} | {r['total_hot_m']:<8} | {r['avg_surface_c']:<7.1f} | {r['schools']:<8} | {r['hospitals']:<10} | {r['bus_stops']:<9}")
 
 
 if __name__ == "__main__":
@@ -2270,18 +2523,21 @@ h1{
   border-color:rgba(14,124,102,.35);
 }
 .route-header{
-  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;
 }
 .route-title-wrap{
-  display:flex;align-items:center;gap:7px;
+  display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0;
 }
 .route-title{
   font:700 14px/1 var(--body);color:var(--ink);
 }
 .route.cool .route-title{color:var(--cool)}
 .route-stats{
-  display:flex;align-items:baseline;gap:5px;
+  display:flex;align-items:baseline;gap:5px;margin-left:auto;
 }
+.big,.risk-badge{white-space:nowrap}
+.route-sub{flex-basis:100%;font-size:11.5px;color:var(--ink2);margin-top:-2px}
+.strip-ends{display:flex;justify-content:space-between;font-size:10px;color:var(--ink3);margin-top:-2px}
 .big{
   font:700 24px/1 var(--display);
   letter-spacing:-.02em;
@@ -2460,6 +2716,27 @@ h1{
 .foot a{color:var(--cool);text-decoration:none}
 .foot a:hover{text-decoration:underline}
 
+/* ---------- on-map legend (B4) ---------- */
+.map-legend{
+  position:fixed;left:436px;bottom:28px;z-index:4;width:190px;
+  background:rgba(255,255,255,.94);backdrop-filter:blur(6px);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px;
+  box-shadow:var(--shadow-sm);font-size:11.5px;
+}
+@media (max-width:820px){.map-legend{display:none}}
+
+/* ---------- laptop viewport optimization (B3) ---------- */
+@media (max-height:900px){
+  .tag{display:none}
+  .finder-card{padding:8px;gap:6px}
+  .field{height:34px}
+  .presets-section .section-title{display:none}
+  .presets-pills{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
+  .preset-chip{flex:none}
+  .verdict{font-size:16.5px}
+  .route{padding:10px 12px}
+}
+
 /* ---------- mobile drawer responsiveness ---------- */
 @media (max-width:820px){
   body{grid-template-columns:1fr}
@@ -2552,7 +2829,7 @@ h1{
     <details class="accordion" id="plannerView">
       <summary>🏛 Shade Priority Corridors (Civic Planner)</summary>
       <div class="accordion-content">
-        <p style="margin:0">Corridors identified via Amazon Athena intersecting schools, healthcare clinics, and bus stops where shade infrastructure reduces high heat exposure most urgently.</p>
+        <p style="margin:0">Corridors identified via Amazon Athena across 35,748 directed street segments (1,188.5 km of network) intersecting schools, healthcare clinics, and bus stops nearby (within 150 m) where shade infrastructure reduces high heat exposure most urgently.</p>
         <div class="table-wrap">
           <table class="priority-table">
             <thead><tr><th>Corridor</th><th>Surface</th><th>Hot (m)</th><th style="text-align:center">Civic Facilities</th></tr></thead>
@@ -2591,6 +2868,11 @@ h1{
   <p class="foot" id="foot">Heat is estimated from Landsat surface temperature and Sentinel-2 vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson">Download the data</a> (GeoJSON).</p>
 </aside>
 <div id="map" role="application" aria-label="Map of central Delhi"></div>
+<div class="map-legend" id="mapLegend" aria-hidden="true">
+  <div style="font-weight:600;margin-bottom:4px">Satellite surface heat</div>
+  <div class="legend"></div>
+  <div class="ends" id="mapLegendEnds"><span>Cooler</span><span>Hotter</span></div>
+</div>
 
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -2666,7 +2948,40 @@ map.on('load', async () => {
   }
   plan();
 });
-$('#heat').addEventListener('change', (e) => { if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none'); });
+$('#heat').addEventListener('change', (e) => {
+  if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none');
+  const leg = $('#mapLegend');
+  if (leg) leg.style.display = e.target.checked ? '' : 'none';
+});
+
+function distM(a, b){
+  const k = Math.cos((a[1] + b[1]) * Math.PI / 360);
+  return Math.hypot((b[0] - a[0]) * 111320 * k, (b[1] - a[1]) * 110540);
+}
+
+async function nameFor(ll){
+  for (const p of PRESETS){
+    if (distM(ll, p.a) < 40) return p.label;
+    if (distM(ll, p.b) < 40) return p.to;
+  }
+  try {
+    const r = await fetch(`https://places.geo.${C.region}.amazonaws.com/v2/reverse-geocode?key=${encodeURIComponent(C.mapKey)}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({QueryPosition: ll, MaxResults: 1})
+    });
+    if (!r.ok) throw new Error('reverse geocode ' + r.status);
+    const it = ((await r.json()).ResultItems || [])[0];
+    return (it && (it.Title || (it.Address && it.Address.Label))) || 'Dropped pin';
+  } catch (_) { return 'Dropped pin'; }
+}
+
+function labelPoint(k){
+  const ll = state[k];
+  if (!ll) return;
+  nameFor(ll).then((n) => {
+    if (state[k] === ll) $(k === 'a' ? '#from' : '#to').value = n;
+  });
+}
 
 function loadFromHash(){
   const h = location.hash.replace(/^#/,'') || location.search.replace(/^\?/,'');
@@ -2679,6 +2994,8 @@ function loadFromHash(){
       if (alStr && !isNaN(+alStr)) { state.alpha = +alStr; $('#alpha').value = state.alpha; }
       setPoint('a', a, 'Selected start');
       setPoint('b', b, 'Selected destination');
+      labelPoint('a');
+      labelPoint('b');
       return true;
     }
   }
@@ -2692,13 +3009,20 @@ function setPoint(k, ll, label){
   if (!state.mk[k]){
     const el = document.createElement('div'); el.className = 'mk ' + k; el.textContent = k.toUpperCase();
     state.mk[k] = new maplibregl.Marker({element: el, draggable: true}).setLngLat(ll).addTo(map);
-    state.mk[k].on('dragend', () => { const p = state.mk[k].getLngLat(); setPoint(k, [p.lng, p.lat], 'Dropped pin'); plan(); });
+    state.mk[k].on('dragend', () => {
+      const p = state.mk[k].getLngLat();
+      setPoint(k, [p.lng, p.lat], 'Dropped pin');
+      labelPoint(k);
+      plan();
+    });
   } else state.mk[k].setLngLat(ll);
 }
 map.on('click', (e) => {
   const p = [e.lngLat.lng, e.lngLat.lat];
   if (!inBox(p)) return showError('That spot is outside the central Delhi coverage area.');
-  setPoint(state.a ? 'b' : 'a', p);   // first click sets A; later clicks move B
+  const k = state.a ? 'b' : 'a';
+  setPoint(k, p);   // first click sets A; later clicks move B
+  labelPoint(k);
   plan();
 });
 $('#swap').onclick = () => {
@@ -2798,7 +3122,8 @@ function show(r, aws){
   clearTimeout(warmTimer);
   const usable = aws && aws.coverage >= 0.6;
   const std = usable ? aws : r.shortest;
-  const stdLabel = usable ? 'Standard walk (Amazon Location Service)' : 'Shortest walk';
+  const stdLabel = usable ? 'Standard walk' : 'Shortest walk';
+  const stdSub = usable ? 'Amazon Location Service pedestrian route' : 'Shortest path on the street graph';
   const cool = r.cool;
   const dMin = Math.round(cool.minutes - std.minutes);
   const stdHotMin = Math.round(std.minutes * (std.hot_share || 0));
@@ -2852,6 +3177,7 @@ function show(r, aws){
           </div>
         </div>
         ${strip(cool.profile, 'cool')}
+        <div class="strip-ends"><span>A</span><span>B</span></div>
         <div class="route-meta">
           <span class="cap">${pct(cool.hot_share)}% in high-heat zones (about ${coolHotMin} min)${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</span>
         </div>
@@ -2867,13 +3193,16 @@ function show(r, aws){
           <div class="route-stats">
             <span class="big">${Math.round(std.minutes)}<small>min · ${(std.length_m/1000).toFixed(1)} km</small></span>
           </div>
+          <span class="route-sub">${esc(stdSub)}</span>
         </div>
         ${strip(std.profile, 'std')}
+        <div class="strip-ends"><span>A</span><span>B</span></div>
         <div class="route-meta">
           <span class="cap">${pct(std.hot_share)}% in high-heat zones (about ${stdHotMin} min)${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</span>
         </div>
       </div>
-    </div>`;
+    </div>
+    <p class="cap" style="margin-top:6px;font-size:11.5px;color:var(--ink2)">High-heat zone: street segments scoring 0.66 or more on the heat index, about the hottest fifth of streets here.</p>`;
 
   state.lastRoutes = {
     cool: { line: cool.line, length_m: cool.length_m },
@@ -3090,7 +3419,7 @@ const TOUR_STEPS = [
   {
     tag: 'Step 2 of 5 · Heat-Aware Walk',
     title: 'Slashing Heat Exposure on Everyday Trips',
-    text: "The standard walk from Jama Masjid to Raj Ghat puts pedestrians in 59% high-heat zones. CoolWalk routes through greener, tree-lined paths, cutting high heat to just 9.5% and dropping surface temperature by 1.9 °C.",
+    text: "The standard walk from Jama Masjid to Raj Ghat puts pedestrians in 59% high-heat zones. CoolWalk routes through greener paths, cutting high heat to just 9.5% and dropping surface temperature by 1.9 °C.",
     action: () => {
       const p = PRESETS[1];
       setPoint('a', p.a, p.label); setPoint('b', p.b, p.to);
@@ -3124,7 +3453,7 @@ const TOUR_STEPS = [
   {
     tag: 'Step 4 of 5 · Microclimate Contrast',
     title: '4 to 6 °C Temperature Variance Across Streets',
-    text: "Unshaded market corridors like Chandni Chowk bake at 46.2 °C. Yet just a few blocks away, tree-lined boulevards like Akbar Road run 4 to 6 °C cooler at 40.6 °C.",
+    text: "Unshaded market corridors like Chandni Chowk bake at 46.2 °C. Yet just a few blocks away, greener boulevards like Akbar Road run 4 to 6 °C cooler at 40.6 °C.",
     action: () => {
       if (hoverDot) { hoverDot.remove(); hoverDot = null; }
       map.flyTo({center: [77.22998, 28.65633], zoom: 15.2, padding: pad(), duration: 800});
@@ -3139,7 +3468,7 @@ const TOUR_STEPS = [
         if (streetPopup) streetPopup.remove();
         streetPopup = new maplibregl.Popup({closeButton: false, offset: 12})
           .setLngLat([77.21797, 28.60693])
-          .setHTML('<strong>Akbar Road</strong><br>Measured surface: 40.6 °C (tree canopy)')
+          .setHTML('<strong>Akbar Road</strong><br>Measured surface: 40.6 °C (greener canopy)')
           .addTo(map);
       }, 4000);
     }
@@ -3243,6 +3572,7 @@ fetch('data/findings.json').then((r) => r.json()).then((f) => {
   }
   if (f.lst_p05_c != null && f.lst_p95_c != null) {
     $('#legendEnds').innerHTML = `<span>Cooler (about ${f.lst_p05_c} °C surface)</span><span>Hotter (about ${f.lst_p95_c} °C)</span>`;
+    if ($('#mapLegendEnds')) $('#mapLegendEnds').innerHTML = `<span>Cooler (~${f.lst_p05_c}°C)</span><span>Hotter (~${f.lst_p95_c}°C)</span>`;
   }
   const li = (a) => a.slice(0,5).map((x) =>
     `<li><button type="button" class="link-btn" data-name="${esc(x.name)}" data-lst="${x.lst_c}" data-heat="${x.heat}" data-lon="${x.lon||''}" data-lat="${x.lat||''}">${esc(x.name)} <small>(${x.lst_c}°C)</small></button></li>`
@@ -3417,11 +3747,22 @@ def test_ui():
         verdict = page.text_content(".verdict")
         print(f"Auto-loaded verdict: {verdict}")
 
-        # Verify heat risk badge
+        # Verify Heat risk badge & subline (B1, B5)
         page.wait_for_selector(".risk-badge", timeout=5000)
         risk_badge = page.text_content(".risk-badge")
         print(f"Heat risk badge: {risk_badge}")
         assert "heat walk" in risk_badge.lower()
+        std_sub = page.text_content(".route-sub")
+        print(f"Standard route subline: {std_sub}")
+        assert "Amazon Location Service" in std_sub
+        
+        # Verify On-Map Legend (B4)
+        print("Verifying on-map legend...")
+        assert page.is_visible("#mapLegend"), "Expected on-map legend to be visible"
+        
+        # Verify Strip Ends (B5)
+        page.wait_for_selector(".strip-ends", timeout=5000)
+        assert page.text_content(".route.cool .strip-ends") == "AB"
         
         # Verify Independent check (Tier 2a)
         print("Verifying Independent check display...")
@@ -3601,6 +3942,14 @@ def test_ui():
         hash_verdict = hash_page.text_content(".verdict")
         print(f"Hash reproduced verdict: {hash_verdict}")
         assert "hot, bare streets" in hash_verdict or "high-heat zones" in hash_verdict
+        
+        # Verify real place names resolved for shared link (B2)
+        print("Waiting for place name resolution from shared link...")
+        hash_page.wait_for_function('() => !document.getElementById("from").value.includes("Selected") && !document.getElementById("to").value.includes("Selected")', timeout=8000)
+        from_name = hash_page.input_value("#from")
+        to_name = hash_page.input_value("#to")
+        print(f"Resolved place names from hash: '{from_name}' to '{to_name}'")
+        assert "Jama" in from_name and "Raj" in to_name
         hash_context.close()
 
         # Test 4: Laptop 1366x768 Viewport (checking above-the-fold walk cards)
@@ -3748,7 +4097,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
 
-KEY = os.environ.get("COOLWALK_MAP_KEY", "")
+KEY = os.environ.get("MAP_API_KEY") or os.environ.get("COOLWALK_MAP_KEY", "")
 API = os.environ.get("COOLWALK_API_URL", "")
 
 if not KEY or not API:
@@ -3814,7 +4163,7 @@ for name1, name2, a, b in pairs:
 ## Run details
 - Landsat scene id / date / cloud cover: `LC08_L2SP_147040_20260609_02_T1` / `2026-06-09` / `0.0%`
 - Sentinel-2 date / tiles: `2026-06-07` / 1 tile (`S2B_43RGM_20260607_0_L2A`, cloud cover 0.03%)
-- Street segments / km of network: 35,748 segments / 2,376.9 km (12,687 intersections)
+- Street segments / km of network: 35,748 directed segments / 1,188.5 km of network (17,644 undirected street segments, 12,687 intersections)
 - Missing temperature share, missing NDVI share: 0.0% LST missing, 0.0% NDVI missing (183,616 points sampled)
 - Temperature range (5th to 95th percentile, C): 40.3 °C to 46.3 °C
 
@@ -3825,7 +4174,7 @@ Sample of 11 street segments across central Delhi (verified against the scored A
 |---|---|---|---|---|---|---|---|
 | **Akbar Road** | secondary | 56 | 40.6 | 39.3–41.9 | 0.961 | 0.042 | Dense canopy avenue in Lutyens' Delhi |
 | **Teen Murti Marg** | secondary | 30 | 41.0 | 40.2–42.5 | 0.954 | 0.068 | Forested boulevard near Teen Murti |
-| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Tree-lined access lane near Janpath |
+| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Greener access lane near Janpath |
 | **Janpath** | secondary | 180 | 42.5 | 39.7–44.1 | 0.755 | 0.252 | Wide commercial and diplomatic avenue |
 | **Lal Kuan Bazar** | tertiary | 28 | 45.6 | 44.6–46.4 | 0.229 | 0.776 | Dense commercial corridor in Old Delhi |
 | **Khari Baoli Road** | tertiary | 12 | 46.4 | 45.6–47.0 | 0.365 | 0.741 | Historic wholesale spice market |
@@ -3838,7 +4187,7 @@ Sample of 11 street segments across central Delhi (verified against the scored A
 The physical contrast is stark: tree-covered avenues register 40.6 °C on average with dense canopy (NDVI 0.961) and minimal heat scores (0.042), running about 4 to 6 °C cooler on average than unshaded asphalt corridors in Shahjahanabad (Akbar Road 40.6 °C vs Chandni Chowk 46.2 °C).
 
 ## Network
-- Share of street length in high-heat zones (heat index >= 0.66): 19.8% (471.4 km of 2,376.9 km)
+- Share of street length in high-heat zones (heat index >= 0.66): 19.8% (235.6 km of 1,188.5 km)
 - Hottest streets: Chipwara Khurd (heat 0.934, LST 46.1 °C), Gali Ahar (0.918, 46.0 °C), Kinari Bazar (0.914, 46.2 °C), Maliwara (0.895, 46.3 °C), Chipwara Kalan (0.892, 46.4 °C), Dariba Kalan (0.886, 46.2 °C)
 - Coolest streets: Shaded parkways and estate roads in New Delhi / Lutyens' zone (Akbar Road, Lodhi Estate, Teen Murti Marg, heat index 0.00 to 0.22)
 
@@ -3886,31 +4235,9 @@ From 974 open civic places in central Delhi scored against satellite heat and st
 ```markdown
 # Benchmark (generated by scripts/benchmark.py)
 
-**Headline Result**: On heat-exposed trips where the shortest walk spends $\ge 50\%$ in high-heat zones, CoolWalk avoids a median of **9.0 minutes in intense high-heat zones** (a **21.5 percentage-point drop**, mean 25.6 pp) for a median detour of just **1.0 extra minute** (2.4% distance detour). **89% of heat-exposed walks cut high-heat exposure by 5 percentage points or more**.
+Random trips of 1.5 to 4.0 km, alpha = 3.0, detour cap 1.45. A trip is heat-exposed when its shortest walk spends at least 50% of the way in high-heat zones: 12% of trips here.
 
-Random sample of 500 trips (1.5 to 4.0 km, alpha = 3.0, detour cap 1.45) across central Delhi.
-
-## 1. Heat-exposed trips (shortest walk >= 50% hot) (62 trips, median 41 min)
-
-*Where heat-aware routing matters most: commercial thoroughfares, unshaded arterial crossings, and exposed transit journeys.*
-
-| Metric | Median | 10th pct | 90th pct | Mean | Trips |
-|---|---|---|---|---|---|
-| Extra walking time (min) | 1.0 | 0.1 | 5.4 | 2.2 min | 62 |
-| Extra distance (%) | 3.3 | 0.1 | 12.5 | 5.1 % | 62 |
-| **Minutes in high-heat zones avoided** | **9.0** | **0.0** | **23.6** | **10.5 min** | **62** |
-| **Share of walk in high-heat zones cut (points)** | **21.5** | **0.4** | **48.3** | **25.6 pp** | **62** |
-| Average surface temperature drop, routing scene (C) | 0.2 | 0.0 | 1.1 | 0.4 C | 62 |
-| Average surface temperature drop, held-out scene 1 (C) | 0.3 | 0.0 | 1.3 | 0.5 C | 62 |
-| Average surface temperature drop, held-out scene 2 (C) | 0.2 | 0.0 | 1.0 | 0.4 C | 62 |
-| Average surface temperature drop, held-out scene 3 (C) | 0.2 | 0.0 | 0.9 | 0.4 C | 62 |
-
-- **Cut high-heat share by 5 points or more: 89%**
-- No real difference (under 1 point): 11%
-
-## 2. All trips (500 trips, median 44 min)
-
-*Network-wide evaluation across all origins and destinations, including already-shaded residential sectors where little heat can be avoided.*
+## All trips (500 trips, median 44 min)
 
 | Metric | Median | 10th pct | 90th pct | Mean | Trips |
 |---|---|---|---|---|---|
@@ -3926,7 +4253,23 @@ Random sample of 500 trips (1.5 to 4.0 km, alpha = 3.0, detour cap 1.45) across 
 - Cut high-heat share by 5 points or more: 42%
 - No real difference (under 1 point): 41%
 
-*Note on validation*: The routing scene's numbers are in-sample (the algorithm optimizes them). The held-out scene rows represent out-of-sample temporal cross-validation corroborating that microclimate differences hold consistently across different pre-monsoon dates (0.2–0.3 °C cooler).
+## Heat-exposed trips (shortest walk >= 50% hot) (62 trips, median 41 min)
+
+| Metric | Median | 10th pct | 90th pct | Mean | Trips |
+|---|---|---|---|---|---|
+| Extra walking time (min) | 1.0 | 0.1 | 5.4 | 2.2 min | 62 |
+| Extra distance (%) | 3.3 | 0.1 | 12.5 | 5.1 % | 62 |
+| Minutes in high-heat zones avoided | 9.0 | 0.0 | 23.6 | 10.5 min | 62 |
+| Share of walk in high-heat zones cut (points) | 21.5 | 0.4 | 48.3 | 25.6 pp | 62 |
+| Average surface temperature drop, routing scene (C) | 0.2 | 0.0 | 1.1 | 0.4 C | 62 |
+| Average surface temperature drop, held-out scene 1 (C) | 0.3 | 0.0 | 1.3 | 0.5 C | 62 |
+| Average surface temperature drop, held-out scene 2 (C) | 0.2 | 0.0 | 1.0 | 0.4 C | 62 |
+| Average surface temperature drop, held-out scene 3 (C) | 0.2 | 0.0 | 0.9 | 0.4 C | 62 |
+
+- Cut high-heat share by 5 points or more: 89%
+- No real difference (under 1 point): 11%
+
+The routing scene's numbers are in-sample (the route minimises them). Held-out scene rows are the independent check.
 ```
 
 ## `docs/DATA.md`
@@ -3946,7 +4289,7 @@ CoolWalk processes open satellite earth observation data and street geometries i
 | **City Findings** | `frontend/data/findings.json` | JSON | Aggregated statistics, high-heat network share, and top hottest/coolest streets with centroids. |
 | **Cool Places & Refuges** | `frontend/data/places.geojson` | GeoJSON (Point) | Civic amenities (metro stations, parks, drinking water, clinics/hospitals) with thermal attributes. |
 | **Shade Priority Corridors** | `frontend/data/shade_priority.csv` | CSV / JSON | Ranked hot corridors near vulnerable civic facilities for municipal tree canopy planning. |
-| **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 street segments with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
+| **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 directed street segments (representing 1,188.5 km of network) with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
 | **Routing Graph** | `work/graph.json.gz` / `s3://<DataBucket>/router/graph.json.gz` | Gzip JSON | Compact indexed graph representation consumed by AWS Lambda. |
 
 ---
@@ -3968,31 +4311,30 @@ Stored in Apache Iceberg format on Amazon S3 and cataloged in AWS Glue / Amazon 
 ### 3.1 Street Segments Table: `coolwalk.segments`
 
 ```sql
-CREATE TABLE coolwalk.segments
-WITH (
-  table_type = 'ICEBERG',
-  format = 'PARQUET',
-  is_external = false,
-  location = 's3://<DataBucket>/iceberg/segments/'
-) AS
-SELECT
-  edge_id BIGINT,
-  u BIGINT,
-  v BIGINT,
-  length_m DOUBLE,
-  mid_lon DOUBLE,
-  mid_lat DOUBLE,
-  lst_c DOUBLE,
-  ndvi DOUBLE,
-  heat_index DOUBLE,
-  highway STRING,
-  name STRING
-FROM coolwalk.segments_raw;
+CREATE TABLE coolwalk.segments (
+  edge_id bigint,
+  u bigint,
+  v bigint,
+  length_m double,
+  mid_lon double,
+  mid_lat double,
+  lst_c double,
+  ndvi double,
+  heat_index double,
+  highway string,
+  name string)
+LOCATION 's3://<DataBucket>/iceberg/segments'
+TBLPROPERTIES (
+  'table_type'='iceberg',
+  'compression_level'='3',
+  'format'='PARQUET',
+  'write_compression'='ZSTD'
+);
 ```
 
 #### Field Definitions:
 - `edge_id`: Unique 64-bit integer segment identifier.
-- `u`, `v`: OpenStreetMap intersection node identifiers.
+- `u`, `v`: OpenStreetMap intersection node identifiers (35,748 directed edges, representing 17,644 undirected street segments).
 - `length_m`: Metric Euclidean length along segment centerline geometry.
 - `mid_lon`, `mid_lat`: Midpoint coordinates of segment centerline.
 - `lst_c`: Mean Land Surface Temperature in degrees Celsius from USGS Landsat 8 TIRS Band 10.
@@ -4004,28 +4346,27 @@ FROM coolwalk.segments_raw;
 ### 3.2 Places & Civic Facilities Table: `coolwalk.places`
 
 ```sql
-CREATE TABLE coolwalk.places
-WITH (
-  table_type = 'ICEBERG',
-  format = 'PARQUET',
-  is_external = false,
-  location = 's3://<DataBucket>/iceberg/places/'
-) AS
-SELECT
-  place_id BIGINT,
-  kind STRING,
-  name STRING,
-  lon DOUBLE,
-  lat DOUBLE,
-  lst_c DOUBLE,
-  ndvi DOUBLE,
-  heat_index DOUBLE
-FROM coolwalk.places_staging;
+CREATE TABLE coolwalk.places (
+  place_id bigint,
+  kind string,
+  name string,
+  lon double,
+  lat double,
+  lst_c double,
+  ndvi double,
+  heat_index double)
+LOCATION 's3://<DataBucket>/iceberg/places'
+TBLPROPERTIES (
+  'table_type'='iceberg',
+  'compression_level'='3',
+  'format'='PARQUET',
+  'write_compression'='ZSTD'
+);
 ```
 
 #### Field Definitions:
 - `place_id`: Unique identifier for the civic amenity / place.
-- `kind`: Amenity category (`metro_station`, `park`, `drinking_water`, `hospital`, `school`, `bus_stop`).
+- `kind`: Amenity category with true values: `park` (373), `bus_stop` (353), `school` (85), `hospital` (73), `water` (58), `metro` (32).
 - `name`: Name of the place or station.
 - `lon`, `lat`: Point coordinates (WGS 84).
 - `lst_c`: Mean Land Surface Temperature in degrees Celsius at this location.
@@ -4039,8 +4380,8 @@ FROM coolwalk.places_staging;
 ### 4.1 Overall High-Heat Network Share
 ```sql
 SELECT
-  round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 3) AS hot_share,
-  round(sum(length_m) / 1000.0, 1) AS network_km,
+  round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 4) AS hot_share,
+  round(sum(length_m) / 2000.0, 1) AS network_km,
   round(approx_percentile(lst_c, 0.05), 1) AS lst_p05_c,
   round(approx_percentile(lst_c, 0.95), 1) AS lst_p95_c
 FROM coolwalk.segments;
@@ -4051,7 +4392,7 @@ FROM coolwalk.segments;
 SELECT
   name,
   round(avg(heat_index), 3) AS heat,
-  round(sum(length_m)) AS length_m,
+  round(sum(length_m) / 2) AS length_m,
   round(avg(lst_c), 1) AS lst_c,
   round(max_by(mid_lon, length_m), 5) AS lon,
   round(max_by(mid_lat, length_m), 5) AS lat
@@ -4069,7 +4410,7 @@ LIMIT 8;
 SELECT
   name,
   round(avg(heat_index), 3) AS heat,
-  round(sum(length_m)) AS length_m,
+  round(sum(length_m) / 2) AS length_m,
   round(avg(lst_c), 1) AS lst_c,
   round(max_by(mid_lon, length_m), 5) AS lon,
   round(max_by(mid_lat, length_m), 5) AS lat
@@ -4080,6 +4421,34 @@ GROUP BY name
 HAVING sum(length_m) > 500
 ORDER BY heat ASC 
 LIMIT 8;
+```
+
+### 4.4 Shade Priority Corridors
+```sql
+SELECT
+  s.name AS corridor,
+  round(avg(s.lst_c), 1) AS avg_surface_c,
+  round(avg(s.heat_index), 2) AS avg_heat_index,
+  round(sum(s.length_m) / 2) AS total_hot_m,
+  count(distinct case when p.kind = 'bus_stop' then p.place_id end) AS bus_stops,
+  count(distinct case when p.kind = 'school' then p.place_id end) AS schools,
+  count(distinct case when p.kind = 'hospital' then p.place_id end) AS hospitals,
+  round(arbitrary(s.mid_lon), 5) AS lon,
+  round(arbitrary(s.mid_lat), 5) AS lat
+FROM coolwalk.segments s
+JOIN coolwalk.places p
+  ON p.kind IN ('bus_stop', 'school', 'hospital')
+ AND abs(s.mid_lat - p.lat) <= 0.0013
+ AND abs(s.mid_lon - p.lon) <= 0.0015
+ AND sqrt(power((s.mid_lon - p.lon) * 111320.0 * 0.878, 2) + power((s.mid_lat - p.lat) * 110540.0, 2)) <= 150.0
+WHERE s.name IS NOT NULL AND s.name != '' AND s.heat_index >= 0.66
+GROUP BY s.name
+HAVING count(distinct case when p.kind IN ('bus_stop', 'school', 'hospital') then p.place_id end) > 0
+ORDER BY (count(distinct case when p.kind = 'school' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'hospital' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'bus_stop' then p.place_id end) * 2) DESC,
+         total_hot_m DESC
+LIMIT 20;
 ```
 ```
 
@@ -4098,7 +4467,7 @@ Walking directions optimize for distance. In a Delhi summer with temperatures so
 
 - **Landsat 8/9 Collection 2 Level-2 surface temperature**, scene `LC08_L2SP_147040_20260609_02_T1` from June 9, 2026, accessed from the USGS Landsat requester-pays S3 bucket in the AWS Registry of Open Data. Cloud cover: **0.0%**. Surface temperature across the study area spans **40.3 °C to 46.3 °C** (5th to 95th percentile).
 - **Sentinel-2 L2A red and near-infrared bands**, from June 7, 2026 (`S2B_43RGM_20260607_0_L2A`), accessed from AWS Open Data and used to compute high-resolution 10 m vegetation index (NDVI).
-- **OpenStreetMap walking network** for central Delhi: **35,748 street segments** covering **2,376.9 km** of walkable streets and 12,687 intersections.
+- **OpenStreetMap walking network** for central Delhi: **35,748 directed street segments** covering **1,188.5 km** of walkable streets (17,644 undirected street segments) and 12,687 intersections.
 
 All data is open and contains no personal information.
 
@@ -4144,18 +4513,18 @@ flowchart LR
   - **Across all 500 trips (network-wide baseline, median 44 min):** A median detour of just **1.0 extra minute** (+2.4% distance) avoids **1.0 minute in high-heat zones** (cutting high-heat share by 2.7 percentage points). 42% of trips achieve a high-heat reduction of 5 percentage points or greater, while 41% of trips make no real difference (in leafy residential neighborhoods where the shortest path is already cool).
 - **Independent multi-date validation:** Routing on one satellite scene risks overfitting to that date's thermal patterns. We evaluated all 500 benchmark trips against three held-out Landsat scenes spanning different pre-monsoon dates: June 17, 2026 (`LC09`), May 17, 2026 (`LC08`), and April 23, 2026 (`LC09`). CoolWalk consistently delivers a **0.2 to 0.3 °C median surface temperature reduction** across all held-out dates, corroborating that cooler corridors remain consistently cooler across different pre-monsoon dates.
 - **Civic infrastructure in the heat:** Cross-referencing 974 open civic points in Delhi with satellite heat revealed significant vulnerabilities: **24 of 73 hospitals and clinics (32.9%)**, **17 of 85 schools (20.0%)**, and **23 of 353 bus stops (6.5%)** sit on streets in high-heat zones.
-- **Where shade matters most (Civic Planner View):** An Amazon Athena spatial query cross-referenced high-heat corridors ($\text{heat} \ge 0.66$) with nearby civic facilities within 150 m. The analysis identified 20 priority corridors where pedestrians face unavoidable heat exposure, led by Netaji Subhash Marg (7.2 km hot segments near 5 schools and 8 bus stops), Rani Jhansi Road (8.5 km hot near 3 schools, 1 clinic, and 9 bus stops), and Chitragupta Road (2.5 km hot near 3 schools and 2 clinics). The full dataset is exportable directly from the map interface as CSV.
+- **Where shade matters most (Civic Planner View):** An Amazon Athena spatial query cross-referenced high-heat corridors ($\text{heat} \ge 0.66$) with nearby civic facilities within 150 m. The analysis identified 20 priority corridors where pedestrians face unavoidable heat exposure, led by Netaji Subhash Marg (3.6 km hot segments near 5 schools and 8 bus stops), Rani Jhansi Road (4.3 km hot near 3 schools, 1 clinic, and 9 bus stops), and Chitragupta Road (1.3 km hot near 3 schools and 2 clinics). The full dataset is exportable directly from the map interface as CSV.
 - **Cool-refuge finder:** CoolWalk embeds 463 public parks, water points, and metro stations into the routing graph, allowing pedestrians in the heat to find their nearest cool refuge via the coolest walking path.
-- **19.8% of street length** (471.4 km of 2,376.9 km) in central Delhi runs in high-heat zones (heat index >= 0.66).
+- **19.8% of street length** (235.6 km of 1,188.5 km) in central Delhi runs in high-heat zones (heat index >= 0.66).
 - **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones (43.9 °C mean surface temp). CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** while lowering mean surface temperature to **42.0 °C** — **avoiding 49.5 percentage points of high-heat exposure** (an 83.9% relative cut) and dropping average surface temperature by a significant **1.9 °C**.
-- **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones** (44.7 °C mean surface temp). CoolWalk takes 23.8 minutes (+3.3 min) and slashes high-heat zone exposure down to **23.5%** (a 56.5 percentage-point drop) by choosing greener, tree-canopied corridors. While the average surface temperature barely changes (44.7 °C vs 44.5 °C), the route is noticeably greener and avoids the sustained thermal mass of unshaded market corridors.
+- **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones** (44.7 °C mean surface temp). CoolWalk takes 23.8 minutes (+3.3 min) and slashes high-heat zone exposure down to **23.5%** (a 56.5 percentage-point drop) by choosing greener corridors. While the average surface temperature barely changes (44.7 °C vs 44.5 °C), the route is noticeably greener and avoids the sustained thermal mass of unshaded market corridors.
 - **Delhi Gate to Lahori Gate:** The standard pedestrian walk between Delhi Gate and Lahori Gate takes 40.2 minutes through dense commercial corridors with **90.3% in high-heat zones** (45.3 °C mean surface temp). CoolWalk takes 44.8 minutes (+4.6 min) and avoids **75.3 percentage points of high-heat exposure**, cutting high-heat time to just **15.0%** (an 83.4% relative cut) and reducing average surface temperature to 44.9 °C.
 - **Hottest streets:** Dense commercial alleys in Shahjahanabad: Chipwara Khurd (heat 0.934, LST 46.1 °C), Kinari Bazar (0.914, 46.2 °C), Maliwara (0.895, 46.3 °C), Chipwara Kalan (0.892, 46.4 °C), and Chandni Chowk (0.754, 46.2 °C).
-- **Coolest streets:** Tree-lined boulevards in New Delhi: Akbar Road (heat 0.042–0.159, LST 40.6–41.9 °C), Teen Murti Marg (heat 0.068–0.217, LST 41.0–42.5 °C), and Janpath Lane (heat 0.192, LST 42.2 °C, NDVI 0.935). Akbar Road runs about 4 to 6 °C cooler on average than unshaded commercial corridors in Old Delhi (Akbar Road 40.6 °C vs Chandni Chowk 46.2 °C). Complete queries and outputs are recorded in `docs/SANITY_CHECK_REPRODUCE.md`.
+- **Coolest streets:** Greener boulevards in New Delhi: Akbar Road (heat 0.042–0.159, LST 40.6–41.9 °C), Teen Murti Marg (heat 0.068–0.217, LST 41.0–42.5 °C), and Janpath Lane (heat 0.192, LST 42.2 °C, NDVI 0.935). Akbar Road runs about 4 to 6 °C cooler on average than unshaded commercial corridors in Old Delhi (Akbar Road 40.6 °C vs Chandni Chowk 46.2 °C). Complete queries and outputs are recorded in `docs/SANITY_CHECK_REPRODUCE.md`.
 
 ## Performance and infrastructure
 
-- **Routing latency:** ~50 ms of pure A* routing compute on AWS Lambda (Python 3.12, 2048 MB memory). Client warm roundtrip latency is ~1.0 s. Amazon EventBridge keeps the Lambda function warm with scheduled 5-minute pings, eliminating cold starts during active use.
+- **Routing latency:** ~50 ms of pure A* routing compute on AWS Lambda (Python 3.12, 2048 MB memory). Client warm roundtrip latency is ~1.0 s. Amazon EventBridge keeps the Lambda function warm with scheduled 5-minute pings, keeping the router warm during active use.
 - **API security & throttling:** The Amazon API Gateway HTTP API enforces configured rate limits (20 req/s, 50 burst) to guard against bot exhaustion. The Amazon Location Service API key is restricted strictly to Maps, Places, and Routes v2 in `us-east-1` with HTTP referer restrictions and an expiration date of December 15, 2026.
 - **Total run cost:** < $0.05 total (Athena queries scanned < 5 MB, S3 requests negligible, Lambda within free tier).
 

@@ -3,7 +3,7 @@
 ## Run details
 - Landsat scene id / date / cloud cover: `LC08_L2SP_147040_20260609_02_T1` / `2026-06-09` / `0.0%`
 - Sentinel-2 date / tiles: `2026-06-07` / 1 tile (`S2B_43RGM_20260607_0_L2A`, cloud cover 0.03%)
-- Street segments / km of network: 35,748 segments / 2,376.9 km (12,687 intersections)
+- Street segments / km of network: 35,748 directed segments / 1,188.5 km of network (17,644 undirected street segments, 12,687 intersections)
 - Missing temperature share, missing NDVI share: 0.0% LST missing, 0.0% NDVI missing (183,616 points sampled)
 - Temperature range (5th to 95th percentile, C): 40.3 °C to 46.3 °C
 
@@ -14,7 +14,7 @@ Sample of 11 street segments across central Delhi (verified against the scored A
 |---|---|---|---|---|---|---|---|
 | **Akbar Road** | secondary | 56 | 40.6 | 39.3–41.9 | 0.961 | 0.042 | Dense canopy avenue in Lutyens' Delhi |
 | **Teen Murti Marg** | secondary | 30 | 41.0 | 40.2–42.5 | 0.954 | 0.068 | Forested boulevard near Teen Murti |
-| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Tree-lined access lane near Janpath |
+| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Greener access lane near Janpath |
 | **Janpath** | secondary | 180 | 42.5 | 39.7–44.1 | 0.755 | 0.252 | Wide commercial and diplomatic avenue |
 | **Lal Kuan Bazar** | tertiary | 28 | 45.6 | 44.6–46.4 | 0.229 | 0.776 | Dense commercial corridor in Old Delhi |
 | **Khari Baoli Road** | tertiary | 12 | 46.4 | 45.6–47.0 | 0.365 | 0.741 | Historic wholesale spice market |
@@ -27,7 +27,7 @@ Sample of 11 street segments across central Delhi (verified against the scored A
 The physical contrast is stark: tree-covered avenues register 40.6 °C on average with dense canopy (NDVI 0.961) and minimal heat scores (0.042), running about 4 to 6 °C cooler on average than unshaded asphalt corridors in Shahjahanabad (Akbar Road 40.6 °C vs Chandni Chowk 46.2 °C).
 
 ## Network
-- Share of street length in high-heat zones (heat index >= 0.66): 19.8% (471.4 km of 2,376.9 km)
+- Share of street length in high-heat zones (heat index >= 0.66): 19.8% (235.6 km of 1,188.5 km)
 - Hottest streets: Chipwara Khurd (heat 0.934, LST 46.1 °C), Gali Ahar (0.918, 46.0 °C), Kinari Bazar (0.914, 46.2 °C), Maliwara (0.895, 46.3 °C), Chipwara Kalan (0.892, 46.4 °C), Dariba Kalan (0.886, 46.2 °C)
 - Coolest streets: Shaded parkways and estate roads in New Delhi / Lutyens' zone (Akbar Road, Lodhi Estate, Teen Murti Marg, heat index 0.00 to 0.22)
 

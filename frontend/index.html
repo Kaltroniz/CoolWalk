@@ -234,18 +234,21 @@ h1{
   border-color:rgba(14,124,102,.35);
 }
 .route-header{
-  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;
 }
 .route-title-wrap{
-  display:flex;align-items:center;gap:7px;
+  display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0;
 }
 .route-title{
   font:700 14px/1 var(--body);color:var(--ink);
 }
 .route.cool .route-title{color:var(--cool)}
 .route-stats{
-  display:flex;align-items:baseline;gap:5px;
+  display:flex;align-items:baseline;gap:5px;margin-left:auto;
 }
+.big,.risk-badge{white-space:nowrap}
+.route-sub{flex-basis:100%;font-size:11.5px;color:var(--ink2);margin-top:-2px}
+.strip-ends{display:flex;justify-content:space-between;font-size:10px;color:var(--ink3);margin-top:-2px}
 .big{
   font:700 24px/1 var(--display);
   letter-spacing:-.02em;
@@ -424,6 +427,27 @@ h1{
 .foot a{color:var(--cool);text-decoration:none}
 .foot a:hover{text-decoration:underline}
 
+/* ---------- on-map legend (B4) ---------- */
+.map-legend{
+  position:fixed;left:436px;bottom:28px;z-index:4;width:190px;
+  background:rgba(255,255,255,.94);backdrop-filter:blur(6px);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px;
+  box-shadow:var(--shadow-sm);font-size:11.5px;
+}
+@media (max-width:820px){.map-legend{display:none}}
+
+/* ---------- laptop viewport optimization (B3) ---------- */
+@media (max-height:900px){
+  .tag{display:none}
+  .finder-card{padding:8px;gap:6px}
+  .field{height:34px}
+  .presets-section .section-title{display:none}
+  .presets-pills{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
+  .preset-chip{flex:none}
+  .verdict{font-size:16.5px}
+  .route{padding:10px 12px}
+}
+
 /* ---------- mobile drawer responsiveness ---------- */
 @media (max-width:820px){
   body{grid-template-columns:1fr}
@@ -516,7 +540,7 @@ h1{
     <details class="accordion" id="plannerView">
       <summary>🏛 Shade Priority Corridors (Civic Planner)</summary>
       <div class="accordion-content">
-        <p style="margin:0">Corridors identified via Amazon Athena intersecting schools, healthcare clinics, and bus stops where shade infrastructure reduces high heat exposure most urgently.</p>
+        <p style="margin:0">Corridors identified via Amazon Athena across 35,748 directed street segments (1,188.5 km of network) intersecting schools, healthcare clinics, and bus stops nearby (within 150 m) where shade infrastructure reduces high heat exposure most urgently.</p>
         <div class="table-wrap">
           <table class="priority-table">
             <thead><tr><th>Corridor</th><th>Surface</th><th>Hot (m)</th><th style="text-align:center">Civic Facilities</th></tr></thead>
@@ -555,6 +579,11 @@ h1{
   <p class="foot" id="foot">Heat is estimated from Landsat surface temperature and Sentinel-2 vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson">Download the data</a> (GeoJSON).</p>
 </aside>
 <div id="map" role="application" aria-label="Map of central Delhi"></div>
+<div class="map-legend" id="mapLegend" aria-hidden="true">
+  <div style="font-weight:600;margin-bottom:4px">Satellite surface heat</div>
+  <div class="legend"></div>
+  <div class="ends" id="mapLegendEnds"><span>Cooler</span><span>Hotter</span></div>
+</div>
 
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -630,7 +659,40 @@ map.on('load', async () => {
   }
   plan();
 });
-$('#heat').addEventListener('change', (e) => { if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none'); });
+$('#heat').addEventListener('change', (e) => {
+  if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none');
+  const leg = $('#mapLegend');
+  if (leg) leg.style.display = e.target.checked ? '' : 'none';
+});
+
+function distM(a, b){
+  const k = Math.cos((a[1] + b[1]) * Math.PI / 360);
+  return Math.hypot((b[0] - a[0]) * 111320 * k, (b[1] - a[1]) * 110540);
+}
+
+async function nameFor(ll){
+  for (const p of PRESETS){
+    if (distM(ll, p.a) < 40) return p.label;
+    if (distM(ll, p.b) < 40) return p.to;
+  }
+  try {
+    const r = await fetch(`https://places.geo.${C.region}.amazonaws.com/v2/reverse-geocode?key=${encodeURIComponent(C.mapKey)}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({QueryPosition: ll, MaxResults: 1})
+    });
+    if (!r.ok) throw new Error('reverse geocode ' + r.status);
+    const it = ((await r.json()).ResultItems || [])[0];
+    return (it && (it.Title || (it.Address && it.Address.Label))) || 'Dropped pin';
+  } catch (_) { return 'Dropped pin'; }
+}
+
+function labelPoint(k){
+  const ll = state[k];
+  if (!ll) return;
+  nameFor(ll).then((n) => {
+    if (state[k] === ll) $(k === 'a' ? '#from' : '#to').value = n;
+  });
+}
 
 function loadFromHash(){
   const h = location.hash.replace(/^#/,'') || location.search.replace(/^\?/,'');
@@ -643,6 +705,8 @@ function loadFromHash(){
       if (alStr && !isNaN(+alStr)) { state.alpha = +alStr; $('#alpha').value = state.alpha; }
       setPoint('a', a, 'Selected start');
       setPoint('b', b, 'Selected destination');
+      labelPoint('a');
+      labelPoint('b');
       return true;
     }
   }
@@ -656,13 +720,20 @@ function setPoint(k, ll, label){
   if (!state.mk[k]){
     const el = document.createElement('div'); el.className = 'mk ' + k; el.textContent = k.toUpperCase();
     state.mk[k] = new maplibregl.Marker({element: el, draggable: true}).setLngLat(ll).addTo(map);
-    state.mk[k].on('dragend', () => { const p = state.mk[k].getLngLat(); setPoint(k, [p.lng, p.lat], 'Dropped pin'); plan(); });
+    state.mk[k].on('dragend', () => {
+      const p = state.mk[k].getLngLat();
+      setPoint(k, [p.lng, p.lat], 'Dropped pin');
+      labelPoint(k);
+      plan();
+    });
   } else state.mk[k].setLngLat(ll);
 }
 map.on('click', (e) => {
   const p = [e.lngLat.lng, e.lngLat.lat];
   if (!inBox(p)) return showError('That spot is outside the central Delhi coverage area.');
-  setPoint(state.a ? 'b' : 'a', p);   // first click sets A; later clicks move B
+  const k = state.a ? 'b' : 'a';
+  setPoint(k, p);   // first click sets A; later clicks move B
+  labelPoint(k);
   plan();
 });
 $('#swap').onclick = () => {
@@ -762,7 +833,8 @@ function show(r, aws){
   clearTimeout(warmTimer);
   const usable = aws && aws.coverage >= 0.6;
   const std = usable ? aws : r.shortest;
-  const stdLabel = usable ? 'Standard walk (Amazon Location Service)' : 'Shortest walk';
+  const stdLabel = usable ? 'Standard walk' : 'Shortest walk';
+  const stdSub = usable ? 'Amazon Location Service pedestrian route' : 'Shortest path on the street graph';
   const cool = r.cool;
   const dMin = Math.round(cool.minutes - std.minutes);
   const stdHotMin = Math.round(std.minutes * (std.hot_share || 0));
@@ -816,6 +888,7 @@ function show(r, aws){
           </div>
         </div>
         ${strip(cool.profile, 'cool')}
+        <div class="strip-ends"><span>A</span><span>B</span></div>
         <div class="route-meta">
           <span class="cap">${pct(cool.hot_share)}% in high-heat zones (about ${coolHotMin} min)${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</span>
         </div>
@@ -831,13 +904,16 @@ function show(r, aws){
           <div class="route-stats">
             <span class="big">${Math.round(std.minutes)}<small>min · ${(std.length_m/1000).toFixed(1)} km</small></span>
           </div>
+          <span class="route-sub">${esc(stdSub)}</span>
         </div>
         ${strip(std.profile, 'std')}
+        <div class="strip-ends"><span>A</span><span>B</span></div>
         <div class="route-meta">
           <span class="cap">${pct(std.hot_share)}% in high-heat zones (about ${stdHotMin} min)${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</span>
         </div>
       </div>
-    </div>`;
+    </div>
+    <p class="cap" style="margin-top:6px;font-size:11.5px;color:var(--ink2)">High-heat zone: street segments scoring 0.66 or more on the heat index, about the hottest fifth of streets here.</p>`;
 
   state.lastRoutes = {
     cool: { line: cool.line, length_m: cool.length_m },
@@ -1054,7 +1130,7 @@ const TOUR_STEPS = [
   {
     tag: 'Step 2 of 5 · Heat-Aware Walk',
     title: 'Slashing Heat Exposure on Everyday Trips',
-    text: "The standard walk from Jama Masjid to Raj Ghat puts pedestrians in 59% high-heat zones. CoolWalk routes through greener, tree-lined paths, cutting high heat to just 9.5% and dropping surface temperature by 1.9 °C.",
+    text: "The standard walk from Jama Masjid to Raj Ghat puts pedestrians in 59% high-heat zones. CoolWalk routes through greener paths, cutting high heat to just 9.5% and dropping surface temperature by 1.9 °C.",
     action: () => {
       const p = PRESETS[1];
       setPoint('a', p.a, p.label); setPoint('b', p.b, p.to);
@@ -1088,7 +1164,7 @@ const TOUR_STEPS = [
   {
     tag: 'Step 4 of 5 · Microclimate Contrast',
     title: '4 to 6 °C Temperature Variance Across Streets',
-    text: "Unshaded market corridors like Chandni Chowk bake at 46.2 °C. Yet just a few blocks away, tree-lined boulevards like Akbar Road run 4 to 6 °C cooler at 40.6 °C.",
+    text: "Unshaded market corridors like Chandni Chowk bake at 46.2 °C. Yet just a few blocks away, greener boulevards like Akbar Road run 4 to 6 °C cooler at 40.6 °C.",
     action: () => {
       if (hoverDot) { hoverDot.remove(); hoverDot = null; }
       map.flyTo({center: [77.22998, 28.65633], zoom: 15.2, padding: pad(), duration: 800});
@@ -1103,7 +1179,7 @@ const TOUR_STEPS = [
         if (streetPopup) streetPopup.remove();
         streetPopup = new maplibregl.Popup({closeButton: false, offset: 12})
           .setLngLat([77.21797, 28.60693])
-          .setHTML('<strong>Akbar Road</strong><br>Measured surface: 40.6 °C (tree canopy)')
+          .setHTML('<strong>Akbar Road</strong><br>Measured surface: 40.6 °C (greener canopy)')
           .addTo(map);
       }, 4000);
     }
@@ -1207,6 +1283,7 @@ fetch('data/findings.json').then((r) => r.json()).then((f) => {
   }
   if (f.lst_p05_c != null && f.lst_p95_c != null) {
     $('#legendEnds').innerHTML = `<span>Cooler (about ${f.lst_p05_c} °C surface)</span><span>Hotter (about ${f.lst_p95_c} °C)</span>`;
+    if ($('#mapLegendEnds')) $('#mapLegendEnds').innerHTML = `<span>Cooler (~${f.lst_p05_c}°C)</span><span>Hotter (~${f.lst_p95_c}°C)</span>`;
   }
   const li = (a) => a.slice(0,5).map((x) =>
     `<li><button type="button" class="link-btn" data-name="${esc(x.name)}" data-lst="${x.lst_c}" data-heat="${x.heat}" data-lon="${x.lon||''}" data-lat="${x.lat||''}">${esc(x.name)} <small>(${x.lst_c}°C)</small></button></li>`

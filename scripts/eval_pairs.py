@@ -6,7 +6,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
 
-KEY = os.environ.get("COOLWALK_MAP_KEY", "")
+KEY = os.environ.get("MAP_API_KEY") or os.environ.get("COOLWALK_MAP_KEY", "")
 API = os.environ.get("COOLWALK_API_URL", "")
 
 if not KEY or not API:

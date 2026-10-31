@@ -30,8 +30,10 @@ files_to_include = [
         'pipeline/sql/q_hot_share.sql',
         'pipeline/sql/q_hottest_streets.sql',
         'pipeline/sql/q_coolest_streets.sql',
+        'pipeline/sql/q_shade_priority.sql',
         'pipeline/03_build_iceberg.py',
-        'pipeline/04_export_assets.py'
+        'pipeline/04_export_assets.py',
+        'pipeline/08_shade_priority.py'
     ]),
     ('Serverless Heat-Aware Routing Microservice', [
         'backend/router/app.py',

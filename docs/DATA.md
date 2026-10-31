@@ -12,7 +12,7 @@ CoolWalk processes open satellite earth observation data and street geometries i
 | **City Findings** | `frontend/data/findings.json` | JSON | Aggregated statistics, high-heat network share, and top hottest/coolest streets with centroids. |
 | **Cool Places & Refuges** | `frontend/data/places.geojson` | GeoJSON (Point) | Civic amenities (metro stations, parks, drinking water, clinics/hospitals) with thermal attributes. |
 | **Shade Priority Corridors** | `frontend/data/shade_priority.csv` | CSV / JSON | Ranked hot corridors near vulnerable civic facilities for municipal tree canopy planning. |
-| **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 street segments with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
+| **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 directed street segments (representing 1,188.5 km of network) with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
 | **Routing Graph** | `work/graph.json.gz` / `s3://<DataBucket>/router/graph.json.gz` | Gzip JSON | Compact indexed graph representation consumed by AWS Lambda. |
 
 ---
@@ -34,31 +34,30 @@ Stored in Apache Iceberg format on Amazon S3 and cataloged in AWS Glue / Amazon 
 ### 3.1 Street Segments Table: `coolwalk.segments`
 
 ```sql
-CREATE TABLE coolwalk.segments
-WITH (
-  table_type = 'ICEBERG',
-  format = 'PARQUET',
-  is_external = false,
-  location = 's3://<DataBucket>/iceberg/segments/'
-) AS
-SELECT
-  edge_id BIGINT,
-  u BIGINT,
-  v BIGINT,
-  length_m DOUBLE,
-  mid_lon DOUBLE,
-  mid_lat DOUBLE,
-  lst_c DOUBLE,
-  ndvi DOUBLE,
-  heat_index DOUBLE,
-  highway STRING,
-  name STRING
-FROM coolwalk.segments_raw;
+CREATE TABLE coolwalk.segments (
+  edge_id bigint,
+  u bigint,
+  v bigint,
+  length_m double,
+  mid_lon double,
+  mid_lat double,
+  lst_c double,
+  ndvi double,
+  heat_index double,
+  highway string,
+  name string)
+LOCATION 's3://<DataBucket>/iceberg/segments'
+TBLPROPERTIES (
+  'table_type'='iceberg',
+  'compression_level'='3',
+  'format'='PARQUET',
+  'write_compression'='ZSTD'
+);
 ```
 
 #### Field Definitions:
 - `edge_id`: Unique 64-bit integer segment identifier.
-- `u`, `v`: OpenStreetMap intersection node identifiers.
+- `u`, `v`: OpenStreetMap intersection node identifiers (35,748 directed edges, representing 17,644 undirected street segments).
 - `length_m`: Metric Euclidean length along segment centerline geometry.
 - `mid_lon`, `mid_lat`: Midpoint coordinates of segment centerline.
 - `lst_c`: Mean Land Surface Temperature in degrees Celsius from USGS Landsat 8 TIRS Band 10.
@@ -70,28 +69,27 @@ FROM coolwalk.segments_raw;
 ### 3.2 Places & Civic Facilities Table: `coolwalk.places`
 
 ```sql
-CREATE TABLE coolwalk.places
-WITH (
-  table_type = 'ICEBERG',
-  format = 'PARQUET',
-  is_external = false,
-  location = 's3://<DataBucket>/iceberg/places/'
-) AS
-SELECT
-  place_id BIGINT,
-  kind STRING,
-  name STRING,
-  lon DOUBLE,
-  lat DOUBLE,
-  lst_c DOUBLE,
-  ndvi DOUBLE,
-  heat_index DOUBLE
-FROM coolwalk.places_staging;
+CREATE TABLE coolwalk.places (
+  place_id bigint,
+  kind string,
+  name string,
+  lon double,
+  lat double,
+  lst_c double,
+  ndvi double,
+  heat_index double)
+LOCATION 's3://<DataBucket>/iceberg/places'
+TBLPROPERTIES (
+  'table_type'='iceberg',
+  'compression_level'='3',
+  'format'='PARQUET',
+  'write_compression'='ZSTD'
+);
 ```
 
 #### Field Definitions:
 - `place_id`: Unique identifier for the civic amenity / place.
-- `kind`: Amenity category (`metro_station`, `park`, `drinking_water`, `hospital`, `school`, `bus_stop`).
+- `kind`: Amenity category with true values: `park` (373), `bus_stop` (353), `school` (85), `hospital` (73), `water` (58), `metro` (32).
 - `name`: Name of the place or station.
 - `lon`, `lat`: Point coordinates (WGS 84).
 - `lst_c`: Mean Land Surface Temperature in degrees Celsius at this location.
@@ -105,8 +103,8 @@ FROM coolwalk.places_staging;
 ### 4.1 Overall High-Heat Network Share
 ```sql
 SELECT
-  round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 3) AS hot_share,
-  round(sum(length_m) / 1000.0, 1) AS network_km,
+  round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 4) AS hot_share,
+  round(sum(length_m) / 2000.0, 1) AS network_km,
   round(approx_percentile(lst_c, 0.05), 1) AS lst_p05_c,
   round(approx_percentile(lst_c, 0.95), 1) AS lst_p95_c
 FROM coolwalk.segments;
@@ -117,7 +115,7 @@ FROM coolwalk.segments;
 SELECT
   name,
   round(avg(heat_index), 3) AS heat,
-  round(sum(length_m)) AS length_m,
+  round(sum(length_m) / 2) AS length_m,
   round(avg(lst_c), 1) AS lst_c,
   round(max_by(mid_lon, length_m), 5) AS lon,
   round(max_by(mid_lat, length_m), 5) AS lat
@@ -135,7 +133,7 @@ LIMIT 8;
 SELECT
   name,
   round(avg(heat_index), 3) AS heat,
-  round(sum(length_m)) AS length_m,
+  round(sum(length_m) / 2) AS length_m,
   round(avg(lst_c), 1) AS lst_c,
   round(max_by(mid_lon, length_m), 5) AS lon,
   round(max_by(mid_lat, length_m), 5) AS lat
@@ -148,3 +146,30 @@ ORDER BY heat ASC
 LIMIT 8;
 ```
 
+### 4.4 Shade Priority Corridors
+```sql
+SELECT
+  s.name AS corridor,
+  round(avg(s.lst_c), 1) AS avg_surface_c,
+  round(avg(s.heat_index), 2) AS avg_heat_index,
+  round(sum(s.length_m) / 2) AS total_hot_m,
+  count(distinct case when p.kind = 'bus_stop' then p.place_id end) AS bus_stops,
+  count(distinct case when p.kind = 'school' then p.place_id end) AS schools,
+  count(distinct case when p.kind = 'hospital' then p.place_id end) AS hospitals,
+  round(arbitrary(s.mid_lon), 5) AS lon,
+  round(arbitrary(s.mid_lat), 5) AS lat
+FROM coolwalk.segments s
+JOIN coolwalk.places p
+  ON p.kind IN ('bus_stop', 'school', 'hospital')
+ AND abs(s.mid_lat - p.lat) <= 0.0013
+ AND abs(s.mid_lon - p.lon) <= 0.0015
+ AND sqrt(power((s.mid_lon - p.lon) * 111320.0 * 0.878, 2) + power((s.mid_lat - p.lat) * 110540.0, 2)) <= 150.0
+WHERE s.name IS NOT NULL AND s.name != '' AND s.heat_index >= 0.66
+GROUP BY s.name
+HAVING count(distinct case when p.kind IN ('bus_stop', 'school', 'hospital') then p.place_id end) > 0
+ORDER BY (count(distinct case when p.kind = 'school' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'hospital' then p.place_id end) * 3 +
+          count(distinct case when p.kind = 'bus_stop' then p.place_id end) * 2) DESC,
+         total_hot_m DESC
+LIMIT 20;
+```

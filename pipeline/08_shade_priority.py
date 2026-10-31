@@ -27,7 +27,7 @@ SELECT
   s.name AS corridor,
   round(avg(s.lst_c), 1) AS avg_surface_c,
   round(avg(s.heat_index), 2) AS avg_heat_index,
-  round(sum(s.length_m)) AS total_hot_m,
+  round(sum(s.length_m) / 2) AS total_hot_m,
   count(distinct case when p.kind = 'bus_stop' then p.place_id end) AS bus_stops,
   count(distinct case when p.kind = 'school' then p.place_id end) AS schools,
   count(distinct case when p.kind = 'hospital' then p.place_id end) AS hospitals,
@@ -67,7 +67,7 @@ def compute_from_parquet():
     records = []
     # Group by name
     for name, group in hot.groupby("name"):
-        tot_m = group["length_m"].sum()
+        tot_m = group["length_m"].sum() / 2
         avg_lst = round(float(group["lst_c"].mean()), 1)
         avg_h = round(float(group["heat_index"].mean()), 2)
         rep_lon = round(float(group["mid_lon"].iloc[0]), 5)

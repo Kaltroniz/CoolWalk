@@ -27,11 +27,22 @@ def test_ui():
         verdict = page.text_content(".verdict")
         print(f"Auto-loaded verdict: {verdict}")
 
-        # Verify heat risk badge
+        # Verify Heat risk badge & subline (B1, B5)
         page.wait_for_selector(".risk-badge", timeout=5000)
         risk_badge = page.text_content(".risk-badge")
         print(f"Heat risk badge: {risk_badge}")
         assert "heat walk" in risk_badge.lower()
+        std_sub = page.text_content(".route-sub")
+        print(f"Standard route subline: {std_sub}")
+        assert "Amazon Location Service" in std_sub
+        
+        # Verify On-Map Legend (B4)
+        print("Verifying on-map legend...")
+        assert page.is_visible("#mapLegend"), "Expected on-map legend to be visible"
+        
+        # Verify Strip Ends (B5)
+        page.wait_for_selector(".strip-ends", timeout=5000)
+        assert page.text_content(".route.cool .strip-ends") == "AB"
         
         # Verify Independent check (Tier 2a)
         print("Verifying Independent check display...")
@@ -211,6 +222,14 @@ def test_ui():
         hash_verdict = hash_page.text_content(".verdict")
         print(f"Hash reproduced verdict: {hash_verdict}")
         assert "hot, bare streets" in hash_verdict or "high-heat zones" in hash_verdict
+        
+        # Verify real place names resolved for shared link (B2)
+        print("Waiting for place name resolution from shared link...")
+        hash_page.wait_for_function('() => !document.getElementById("from").value.includes("Selected") && !document.getElementById("to").value.includes("Selected")', timeout=8000)
+        from_name = hash_page.input_value("#from")
+        to_name = hash_page.input_value("#to")
+        print(f"Resolved place names from hash: '{from_name}' to '{to_name}'")
+        assert "Jama" in from_name and "Raj" in to_name
         hash_context.close()
 
         # Test 4: Laptop 1366x768 Viewport (checking above-the-fold walk cards)
