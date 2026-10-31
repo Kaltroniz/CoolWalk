@@ -9,3 +9,4 @@ for e in g["edges"]:
 with gzip.open("work/graph.json.gz", "wt", encoding="utf-8") as f:
     json.dump(g, f, separators=(",", ":"))
 print("edges with lst and ndvi:", len(g["edges"]))
+
