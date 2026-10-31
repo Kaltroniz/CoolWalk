@@ -8,8 +8,10 @@ CoolWalk processes open satellite earth observation data and street geometries i
 
 | File | Location | Format | Description |
 |---|---|---|---|
-| **Heat Grid Layer** | [`frontend/data/heat_grid.geojson`](file:///c:/Users/Acer/OneDrive/Documents/hackathons/CoolWalk/frontend/data/heat_grid.geojson) | GeoJSON (Polygon) | 2,092 spatial cells (150 m resolution) with normalized heat scores. [Download GeoJSON](data/heat_grid.geojson) |
-| **City Findings** | [`frontend/data/findings.json`](file:///c:/Users/Acer/OneDrive/Documents/hackathons/CoolWalk/frontend/data/findings.json) | JSON | Aggregated statistics, high-heat network share, and top hottest/coolest streets with centroids. |
+| **Heat Grid Layer** | `frontend/data/heat_grid.geojson` | GeoJSON (Polygon) | 2,092 spatial cells (150 m resolution) with normalized heat scores. [Download GeoJSON](data/heat_grid.geojson) |
+| **City Findings** | `frontend/data/findings.json` | JSON | Aggregated statistics, high-heat network share, and top hottest/coolest streets with centroids. |
+| **Cool Places & Refuges** | `frontend/data/places.geojson` | GeoJSON (Point) | Civic amenities (metro stations, parks, drinking water, clinics/hospitals) with thermal attributes. |
+| **Shade Priority Corridors** | `frontend/data/shade_priority.csv` | CSV / JSON | Ranked hot corridors near vulnerable civic facilities for municipal tree canopy planning. |
 | **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 street segments with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
 | **Routing Graph** | `work/graph.json.gz` / `s3://<DataBucket>/router/graph.json.gz` | Gzip JSON | Compact indexed graph representation consumed by AWS Lambda. |
 
@@ -25,40 +27,76 @@ Each polygon represents a 150 m cell (`0.0015°` latitude/longitude grid) spanni
 
 ---
 
-## 3. Apache Iceberg Table: `coolwalk.segments`
+## 3. Apache Iceberg Tables
 
 Stored in Apache Iceberg format on Amazon S3 and cataloged in AWS Glue / Amazon Athena:
 
+### 3.1 Street Segments Table: `coolwalk.segments`
+
 ```sql
-CREATE TABLE coolwalk.segments (
+CREATE TABLE coolwalk.segments
+WITH (
+  table_type = 'ICEBERG',
+  format = 'PARQUET',
+  is_external = false,
+  location = 's3://<DataBucket>/iceberg/segments/'
+) AS
+SELECT
   edge_id BIGINT,
   u BIGINT,
   v BIGINT,
-  key BIGINT,
-  name STRING,
-  highway STRING,
   length_m DOUBLE,
   mid_lon DOUBLE,
   mid_lat DOUBLE,
   lst_c DOUBLE,
   ndvi DOUBLE,
-  heat_index DOUBLE
-)
-PARTITIONED BY (bucket(16, edge_id))
-LOCATION 's3://<DataBucket>/iceberg/segments/'
-TBLPROPERTIES ('table_type'='ICEBERG', 'format'='parquet');
+  heat_index DOUBLE,
+  highway STRING,
+  name STRING
+FROM coolwalk.segments_raw;
 ```
 
-### Field Definitions:
+#### Field Definitions:
 - `edge_id`: Unique 64-bit integer segment identifier.
 - `u`, `v`: OpenStreetMap intersection node identifiers.
-- `name`: Street name from OpenStreetMap (`NULL` or empty for unnamed alleys).
-- `highway`: OSM road hierarchy classification (`primary`, `secondary`, `tertiary`, `residential`, `pedestrian`, `living_street`, etc.).
 - `length_m`: Metric Euclidean length along segment centerline geometry.
 - `mid_lon`, `mid_lat`: Midpoint coordinates of segment centerline.
 - `lst_c`: Mean Land Surface Temperature in degrees Celsius from USGS Landsat 8 TIRS Band 10.
 - `ndvi`: Mean Normalized Difference Vegetation Index from Copernicus Sentinel-2 B4/B8.
 - `heat_index`: Composite heat score (`0.0` to `1.0`). Scores $\ge 0.66$ indicate high-heat zones.
+- `highway`: OSM road hierarchy classification (`primary`, `secondary`, `tertiary`, `residential`, `pedestrian`, `living_street`, etc.).
+- `name`: Street name from OpenStreetMap (`NULL` or empty for unnamed alleys).
+
+### 3.2 Places & Civic Facilities Table: `coolwalk.places`
+
+```sql
+CREATE TABLE coolwalk.places
+WITH (
+  table_type = 'ICEBERG',
+  format = 'PARQUET',
+  is_external = false,
+  location = 's3://<DataBucket>/iceberg/places/'
+) AS
+SELECT
+  place_id BIGINT,
+  kind STRING,
+  name STRING,
+  lon DOUBLE,
+  lat DOUBLE,
+  lst_c DOUBLE,
+  ndvi DOUBLE,
+  heat_index DOUBLE
+FROM coolwalk.places_staging;
+```
+
+#### Field Definitions:
+- `place_id`: Unique identifier for the civic amenity / place.
+- `kind`: Amenity category (`metro_station`, `park`, `drinking_water`, `hospital`, `school`, `bus_stop`).
+- `name`: Name of the place or station.
+- `lon`, `lat`: Point coordinates (WGS 84).
+- `lst_c`: Mean Land Surface Temperature in degrees Celsius at this location.
+- `ndvi`: Mean NDVI vegetation index at this location.
+- `heat_index`: Heat index score (`0.0` to `1.0`). Scores $< 0.45$ count as natural thermal refuges.
 
 ---
 
@@ -109,3 +147,4 @@ HAVING sum(length_m) > 500
 ORDER BY heat ASC 
 LIMIT 8;
 ```
+

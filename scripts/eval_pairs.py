@@ -1,8 +1,29 @@
-import urllib.request
 import json
+import os
+import re
+from pathlib import Path
+import urllib.request
 
-KEY = 'v1.public.eyJqdGkiOiJmMjE0ODcxZS00NzFkLTQxZDItOTZlNi1lYmU3ZTdiMmJjZWEifWeEYCtJOXjUE20R5AOJbGkKw8kiid1QbPKJ4ibNB-M8BSq18WWfZ3RElVvNsHpN50VSYosqgQTJhQFtA_ASdVOnPcAFYvE2A8yPj3PmH42KY1JlIko_MHvEP7CZDuT8awXnLIzNDEk4t76uUiEy12mRjugyX5aEO6milL42yBdOQ_SJZd2zyAskDoCEolPUTtDh8SDNhUgXHfnjL05_mDr0F51RzNnambeor_Z5LMGcI8TnIhjm37duYGCuEBdj8JlrzjSZ4MFv4jiNXVqOrh3c6iEYejU_Ju6olZ6To4tfBuIsmMRc4HSxCEMEwwYAhlV8iYfS0T5CqlBo5ZecsG0.ZWU0ZWIzMTktMWRhNi00Mzg0LTllMzYtNzlmMDU3MjRmYTkx'
-API = 'https://euzq1skask.execute-api.us-east-1.amazonaws.com'
+ROOT = Path(__file__).resolve().parent.parent
+
+KEY = os.environ.get("COOLWALK_MAP_KEY", "")
+API = os.environ.get("COOLWALK_API_URL", "")
+
+if not KEY or not API:
+    cfg_file = ROOT / "frontend" / "config.js"
+    if cfg_file.exists():
+        txt = cfg_file.read_text(encoding="utf-8")
+        if not KEY:
+            m_key = re.search(r'mapKey:\s*["\']([^"\']+)["\']', txt)
+            if m_key:
+                KEY = m_key.group(1)
+        if not API:
+            m_api = re.search(r'apiUrl:\s*["\']([^"\']+)["\']', txt)
+            if m_api:
+                API = m_api.group(1)
+
+if not API:
+    API = "https://euzq1skask.execute-api.us-east-1.amazonaws.com"
 
 pairs = [
     ('Chandni Chowk', 'Connaught Place', [77.2303, 28.6562], [77.2167, 28.6315]),

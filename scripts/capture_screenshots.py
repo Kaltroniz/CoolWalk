@@ -53,6 +53,15 @@ with sync_playwright() as p:
     print('Captured 04_refuge_finder.png')
     refuge_page.close()
 
+    # 5. Laptop 1366x768 Viewport (demonstrating walk comparison above-the-fold)
+    laptop_page = browser.new_page(viewport={'width': 1366, 'height': 768})
+    laptop_page.goto(SITE_URL)
+    laptop_page.wait_for_selector('.route.cool', timeout=15000)
+    laptop_page.wait_for_timeout(2500)
+    laptop_page.screenshot(path=str(OUT / '05_laptop_1366x768.png'))
+    print('Captured 05_laptop_1366x768.png')
+    laptop_page.close()
+
     browser.close()
 
 print('All screenshots captured successfully!')

@@ -31,10 +31,11 @@ Resources:
       Policies:
         - S3ReadPolicy: { BucketName: !Ref DataBucket }
       Events:
-        Health: { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /health, Method: GET } }
-        Route:  { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /route,  Method: POST } }
-        Score:  { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /score,  Method: POST } }
-        Refuge: { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /refuge, Method: POST } }
+        Health:   { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /health, Method: GET } }
+        Route:    { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /route,  Method: POST } }
+        Score:    { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /score,  Method: POST } }
+        Refuge:   { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /refuge, Method: POST } }
+        KeepWarm: { Type: Schedule, Properties: { Schedule: rate(5 minutes) } }
 
   Api:
     Type: AWS::Serverless::HttpApi

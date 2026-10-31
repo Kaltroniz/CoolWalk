@@ -167,3 +167,4 @@ for section_title, file_list in files_to_include:
 full_doc = '\n'.join(out)
 (ROOT / 'COOLWALK_FULL_CODE_AND_LOGIC.md').write_text(full_doc, encoding='utf-8')
 print(f'COOLWALK_FULL_CODE_AND_LOGIC.md updated: {len(full_doc):,} characters across {len(full_doc.splitlines()):,} lines.')
+

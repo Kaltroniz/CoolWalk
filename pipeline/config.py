@@ -10,6 +10,17 @@ FRONT_DATA.mkdir(parents=True, exist_ok=True)
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
 BUCKET = os.getenv("COOLWALK_BUCKET", "")          # data bucket from the CloudFormation stack
+if not BUCKET:
+    try:
+        import boto3
+        cf = boto3.client("cloudformation", region_name=REGION)
+        st = cf.describe_stacks(StackName="coolwalk")["Stacks"][0]
+        for o in st.get("Outputs", []):
+            if o.get("OutputKey") == "DataBucket":
+                BUCKET = o["OutputValue"]
+                break
+    except Exception:
+        pass
 DB = "coolwalk"
 
 # west, south, east, north (central Delhi: Old Delhi to Lodhi Garden)

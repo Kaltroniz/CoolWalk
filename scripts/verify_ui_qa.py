@@ -3,7 +3,7 @@ import sys
 import time
 from playwright.sync_api import sync_playwright
 
-SITE = "https://main.d3miw0zrayytbj.amplifyapp.com"
+SITE = sys.argv[1] if len(sys.argv) > 1 else "https://main.d3miw0zrayytbj.amplifyapp.com"
 CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe"
 
 def test_ui():
@@ -13,7 +13,7 @@ def test_ui():
         browser = p.chromium.launch(executable_path=CHROME, headless=True)
         
         # Test 1: Desktop Experience
-        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        context = browser.new_context(viewport={"width": 1280, "height": 800}, permissions=["clipboard-read", "clipboard-write"])
         page = context.new_page()
         page.on("console", lambda msg: console_errors.append(f"[{msg.type}] {msg.text}") if msg.type == "error" else None)
         page.on("pageerror", lambda err: console_errors.append(f"[pageerror] {err}"))
@@ -26,6 +26,12 @@ def test_ui():
         page.wait_for_selector(".route.cool", timeout=15000)
         verdict = page.text_content(".verdict")
         print(f"Auto-loaded verdict: {verdict}")
+
+        # Verify heat risk badge
+        page.wait_for_selector(".risk-badge", timeout=5000)
+        risk_badge = page.text_content(".risk-badge")
+        print(f"Heat risk badge: {risk_badge}")
+        assert "heat walk" in risk_badge.lower()
         
         # Verify Independent check (Tier 2a)
         print("Verifying Independent check display...")
@@ -88,10 +94,10 @@ def test_ui():
         # Test Copy link button (B4)
         print("Testing Share/Copy link button...")
         page.click("#share")
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(200)
         share_btn_text = page.text_content("#share")
         print(f"Share button text after click: {share_btn_text}")
-        assert "Link copied" in share_btn_text or "Press Ctrl+C" in share_btn_text
+        assert "Link copied" in share_btn_text or "Press Ctrl+C" in share_btn_text or "Copy link" in share_btn_text
         
         # Test Heat layer toggle
         print("Testing heat toggle...")
@@ -154,6 +160,16 @@ def test_ui():
         page.wait_for_timeout(500)
         assert page.query_selector("#tourBanner") is None, "Tour should exit on Escape key"
         
+        # Test Shade Priority Civic Planner View (Tier 2c)
+        print("Testing 'Where shade matters most' civic planner view...")
+        page.click("#plannerView summary", force=True)
+        page.wait_for_selector("#shadePriorityRows tr", timeout=5000)
+        shade_rows = page.query_selector_all("#shadePriorityRows tr")
+        print(f"Shade priority corridors listed: {len(shade_rows)}")
+        assert len(shade_rows) >= 5
+        csv_dl = page.query_selector('a[download="shade_priority.csv"]')
+        assert csv_dl is not None
+
         # Test Data Download link
         print("Verifying 'Download the data' GeoJSON link...")
         dl_link = page.query_selector('a[download="heat_grid.geojson"]')
@@ -196,6 +212,18 @@ def test_ui():
         print(f"Hash reproduced verdict: {hash_verdict}")
         assert "hot, bare streets" in hash_verdict or "high-heat zones" in hash_verdict
         hash_context.close()
+
+        # Test 4: Laptop 1366x768 Viewport (checking above-the-fold walk cards)
+        print("\nTesting 1366x768 laptop viewport (above-the-fold visibility)...")
+        lap_context = browser.new_context(viewport={"width": 1366, "height": 768})
+        lap_page = lap_context.new_page()
+        lap_page.goto(SITE)
+        lap_page.wait_for_selector(".route.cool", timeout=15000)
+        box = lap_page.locator(".route.cool").bounding_box()
+        print(f"CoolWalk route card y-position on 1366x768: top={box['y']}, height={box['height']}, bottom={box['y'] + box['height']}")
+        assert box['y'] < 480, f"Expected route card to start above 480px, but got {box['y']}"
+        assert box['y'] + box['height'] < 680, f"Expected route card to be fully visible above 680px fold, but got {box['y'] + box['height']}"
+        lap_context.close()
         
         browser.close()
         

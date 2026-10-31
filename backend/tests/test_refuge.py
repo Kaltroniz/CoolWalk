@@ -46,3 +46,4 @@ def test_origin_on_a_place():
 if __name__ == "__main__":
     for k, v in sorted(globals().items()):
         if k.startswith("test_"): v(); print("ok  ", k)
+

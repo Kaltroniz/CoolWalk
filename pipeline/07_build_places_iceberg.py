@@ -13,8 +13,9 @@ ath = importlib.import_module("03_build_iceberg")
 
 
 def main():
-    bucket = "coolwalk-databucket-mdfu7jkbfxma"
-    config.BUCKET = bucket
+    bucket = config.BUCKET
+    if not bucket:
+        sys.exit("Error: config.BUCKET is not set.")
     parquet = config.WORK / "places.parquet"
     if not parquet.exists():
         sys.exit("work/places.parquet does not exist.")

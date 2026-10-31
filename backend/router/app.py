@@ -315,6 +315,12 @@ def _resp(status, payload):
 
 
 def handler(event, _context=None):
+    if event.get("source") in ("aws.events", "serverless-plugin-warmup") or event.get("detail-type") == "Scheduled Event":
+        try:
+            load()
+        except Exception:
+            pass
+        return _resp(200, {"ok": True, "warmed": True})
     path = event.get("rawPath", "/")
     try:
         g = load()
