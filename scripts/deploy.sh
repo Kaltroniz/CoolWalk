@@ -32,8 +32,12 @@ if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
   aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" >/dev/null || true
 fi
 
+# Deploy to AWS Amplify Hosting (provides managed HTTPS)
+python3 scripts/deploy_amplify.py
+
 echo
-echo "Site:        $SITE_URL"
+echo "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
+echo "S3 fallback: $SITE_URL"
 echo "API:         $API_URL"
 echo "Data bucket: $DATA_BUCKET   (export COOLWALK_BUCKET=$DATA_BUCKET)"
-echo "Add $SITE_URL/* to the API key's allowed referers if you have not already."
+echo "Add https://main.d3miw0zrayytbj.amplifyapp.com/* to the API key's allowed referers."

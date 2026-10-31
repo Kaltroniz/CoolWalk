@@ -70,7 +70,10 @@ h2{font:600 13px/1.2 var(--body);color:var(--ink2);margin:0 0 8px}
 .layers label{display:flex;gap:8px;align-items:center;cursor:pointer}
 details summary{cursor:pointer;font-weight:600}
 details ol{margin:8px 0 0;padding-left:20px}
-details li{margin:2px 0}
+details li{margin:3px 0}
+.link-btn{background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px;font:inherit;display:inline-flex;align-items:baseline;gap:6px}
+.link-btn:hover,.link-btn:focus-visible{color:var(--cool);text-decoration-color:var(--cool)}
+.link-btn small{color:var(--ink2);text-decoration:none}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .foot{color:var(--ink2);font-size:12.5px;margin-top:auto}
 .mk{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:600 13px var(--body);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:grab;background:var(--std)}
@@ -163,7 +166,27 @@ function ramp(v){
   }
   return RAMP[RAMP.length-1][1];
 }
-const strip = (profile) => `<div class="strip" role="img" aria-label="Heat along the walk, start to end">${(profile||[]).map((v) => `<i style="background:${ramp(v)}"></i>`).join('')}</div>`;
+const strip = (profile, which) => `<div class="strip" data-which="${which}" role="img" aria-label="Heat along the walk, start to end">${(profile||[]).map((v, idx) => `<i data-idx="${idx}" title="Bin ${idx+1}/48 · Heat index: ${v != null ? v : 'N/A'}" style="background:${ramp(v)}"></i>`).join('')}</div>`;
+
+const dist_m = (lon1, lat1, lon2, lat2) => {
+  const k = Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  return Math.hypot((lon2 - lon1) * 111320 * k, (lat2 - lat1) * 110540);
+};
+
+function pointAtDist(line, targetDist){
+  if (!line || !line.length) return null;
+  if (line.length === 1 || targetDist <= 0) return line[0];
+  let cum = 0;
+  for (let i = 0; i < line.length - 1; i++){
+    const d = dist_m(line[i][0], line[i][1], line[i+1][0], line[i+1][1]);
+    if (cum + d >= targetDist){
+      const t = d > 0 ? (targetDist - cum) / d : 0;
+      return [line[i][0] + (line[i+1][0] - line[i][0]) * t, line[i][1] + (line[i+1][1] - line[i][1]) * t];
+    }
+    cum += d;
+  }
+  return line[line.length - 1];
+}
 
 /* ---------- map ---------- */
 const keyed = (url) => (url.includes('amazonaws.com') && !url.includes('key=')) ? url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(C.mapKey) : url;
@@ -238,6 +261,8 @@ $('#swap').onclick = () => {
   setPoint('a', b, lb); setPoint('b', a, la); plan();
 };
 $('#clear').onclick = () => {
+  if (hoverDot) { hoverDot.remove(); hoverDot = null; }
+  delete state.lastRoutes;
   for (const k of ['a','b']){ state[k] = null; if (state.mk[k]) { state.mk[k].remove(); delete state.mk[k]; } }
   $('#from').value = $('#to').value = '';
   for (const id of ['std','cool']) if (map.getSource('r-'+id)) map.getSource('r-'+id).setData(emptyLine);
@@ -327,10 +352,14 @@ function show(r, aws){
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
     <div class="route cool"><h3>CoolWalk</h3>
       <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
+      ${strip(cool.profile, 'cool')}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
     <div class="route"><h3>${esc(stdLabel)}</h3>
       <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
+      ${strip(std.profile, 'std')}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
+  state.lastRoutes = {
+    cool: { line: cool.line, length_m: cool.length_m },
+    std: { line: usable ? aws.line : r.shortest.line, length_m: std.length_m }
+  };
   draw('cool', cool.line); draw('std', usable ? aws.line : r.shortest.line);
   try { history.replaceState(null, '', `#a=${state.a[0].toFixed(5)},${state.a[1].toFixed(5)}&b=${state.b[0].toFixed(5)},${state.b[1].toFixed(5)}&alpha=${state.alpha}`); } catch(_){}
   const all = cool.line.concat(usable ? aws.line : r.shortest.line);
@@ -340,14 +369,44 @@ function show(r, aws){
 function draw(id, line){ const s = map.getSource('r-' + id); if (s) s.setData({type:'Feature', geometry:{type:'LineString', coordinates: line}}); }
 const busy = () => { $('#result').insertAdjacentHTML('afterbegin', '<div class="busy" role="status" aria-label="Finding the coolest walk"></div>'); };
 function showError(msg){ $('#result').innerHTML = `<p class="err" role="alert">${esc(msg)}</p>`; }
+let hoverDot = null;
+$('#result').addEventListener('mousemove', (e) => {
+  const bar = e.target.closest('.strip i[data-idx]');
+  if (!bar || !state.lastRoutes) { if (hoverDot) { hoverDot.remove(); hoverDot = null; } return; }
+  const which = bar.parentElement.dataset.which;
+  const route = state.lastRoutes[which];
+  if (!route || !route.line || !route.line.length) return;
+  const idx = +bar.dataset.idx;
+  const targetDist = ((idx + 0.5) / 48) * route.length_m;
+  const pt = pointAtDist(route.line, targetDist);
+  if (!pt) return;
+  if (!hoverDot) {
+    const el = document.createElement('div');
+    el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#14222B;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);pointer-events:none;transform:translate(-50%,-50%)';
+    hoverDot = new maplibregl.Marker({element: el}).setLngLat(pt).addTo(map);
+  } else {
+    hoverDot.setLngLat(pt);
+  }
+});
+$('#result').addEventListener('mouseleave', () => {
+  if (hoverDot) { hoverDot.remove(); hoverDot = null; }
+});
 $('#alpha').addEventListener('input', debounce((e) => { state.alpha = +e.target.value; plan(); }, 200));
 
 /* ---------- data story and provenance ---------- */
 fetch('data/findings.json').then((r) => r.json()).then((f) => {
   $('#findLead').textContent = `${pct(f.hot_share)}% of the ${Math.round(f.network_km)} km of walkable streets in this area sit in high-heat zones.`;
-  const li = (a) => a.slice(0,5).map((x) => `<li>${esc(x.name)}</li>`).join('');
+  const li = (a) => a.slice(0,5).map((x) =>
+    `<li><button type="button" class="link-btn" data-lon="${x.lon||''}" data-lat="${x.lat||''}">${esc(x.name)} <small>(${x.lst_c}°C)</small></button></li>`
+  ).join('');
   $('#hotList').innerHTML = li(f.hottest); $('#coolList').innerHTML = li(f.coolest);
   $('#findings').hidden = false;
+  $('#findings').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-lon]');
+    if (b && b.dataset.lon && b.dataset.lat) {
+      map.flyTo({center: [+b.dataset.lon, +b.dataset.lat], zoom: 15.5, duration: 800});
+    }
+  });
 }).catch(() => {});
 fetch(C.apiUrl + '/health').then((r) => r.json()).then((h) => {
   const m = h.meta || {};

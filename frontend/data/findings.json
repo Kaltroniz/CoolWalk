@@ -8,99 +8,131 @@
       "name": "Chipwara Khurd",
       "heat": 0.934,
       "lst_c": 46.1,
-      "length_m": 645.0
+      "length_m": 645.0,
+      "lon": 77.23146,
+      "lat": 28.6509
     },
     {
       "name": "Gali Ahar",
       "heat": 0.918,
       "lst_c": 46.0,
-      "length_m": 637.0
+      "length_m": 637.0,
+      "lon": 77.23228,
+      "lat": 28.65354
     },
     {
       "name": "Kinari Bazar",
       "heat": 0.914,
       "lst_c": 46.2,
-      "length_m": 645.0
+      "length_m": 645.0,
+      "lon": 77.23203,
+      "lat": 28.6551
     },
     {
       "name": "Maliwara",
       "heat": 0.895,
       "lst_c": 46.3,
-      "length_m": 610.0
+      "length_m": 610.0,
+      "lon": 77.22931,
+      "lat": 28.6555
+    },
+    {
+      "name": "گاندھی گلی",
+      "heat": 0.892,
+      "lst_c": 46.1,
+      "length_m": 589.0,
+      "lon": 77.22225,
+      "lat": 28.65829
     },
     {
       "name": "Chipwara Kalan",
       "heat": 0.892,
       "lst_c": 46.4,
-      "length_m": 503.0
-    },
-    {
-      "name": "\u06af\u0627\u0646\u062f\u06be\u06cc \u06af\u0644\u06cc",
-      "heat": 0.892,
-      "lst_c": 46.1,
-      "length_m": 589.0
+      "length_m": 503.0,
+      "lon": 77.23236,
+      "lat": 28.65197
     },
     {
       "name": "Dariba Kalan",
       "heat": 0.886,
       "lst_c": 46.2,
-      "length_m": 732.0
+      "length_m": 732.0,
+      "lon": 77.23354,
+      "lat": 28.65501
     },
     {
       "name": "Haidar Quli",
       "heat": 0.886,
       "lst_c": 46.0,
-      "length_m": 752.0
+      "length_m": 752.0,
+      "lon": 77.22411,
+      "lat": 28.65557
     }
   ],
   "coolest": [
     {
-      "name": "path s1",
-      "heat": 0.0,
-      "lst_c": 40.1,
-      "length_m": 923.0
-    },
-    {
       "name": "route b",
       "heat": 0.0,
       "lst_c": 39.5,
-      "length_m": 1097.0
+      "length_m": 1097.0,
+      "lon": 77.24665,
+      "lat": 28.60391
+    },
+    {
+      "name": "Aurangzeb Lane",
+      "heat": 0.0,
+      "lst_c": 39.9,
+      "length_m": 1262.0,
+      "lon": 77.21586,
+      "lat": 28.59673
     },
     {
       "name": "route a",
       "heat": 0.0,
       "lst_c": 39.0,
-      "length_m": 855.0
-    },
-    {
-      "name": "path r5",
-      "heat": 0.0,
-      "lst_c": 40.0,
-      "length_m": 603.0
+      "length_m": 855.0,
+      "lon": 77.24745,
+      "lat": 28.60185
     },
     {
       "name": "Agrangzeb road",
       "heat": 0.0,
       "lst_c": 40.2,
-      "length_m": 559.0
+      "length_m": 559.0,
+      "lon": 77.21256,
+      "lat": 28.59957
     },
     {
-      "name": "path f",
+      "name": "path s1",
       "heat": 0.0,
-      "lst_c": 39.5,
-      "length_m": 536.0
-    },
-    {
-      "name": "path c",
-      "heat": 0.0,
-      "lst_c": 39.5,
-      "length_m": 762.0
+      "lst_c": 40.1,
+      "length_m": 923.0,
+      "lon": 77.2509,
+      "lat": 28.60153
     },
     {
       "name": "path e",
       "heat": 0.0,
       "lst_c": 39.1,
-      "length_m": 712.0
+      "length_m": 712.0,
+      "lon": 77.24886,
+      "lat": 28.60236
+    },
+    {
+      "name": "path f",
+      "heat": 0.0,
+      "lst_c": 39.5,
+      "length_m": 536.0,
+      "lon": 77.2466,
+      "lat": 28.603
+    },
+    {
+      "name": "path r5",
+      "heat": 0.0,
+      "lst_c": 40.0,
+      "length_m": 603.0,
+      "lon": 77.24409,
+      "lat": 28.60449
     }
   ]
 }

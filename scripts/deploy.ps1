@@ -50,8 +50,12 @@ if ($distId) {
     aws cloudfront create-invalidation --distribution-id $distId --paths "/*"
 }
 
+# Deploy to AWS Amplify Hosting (provides managed HTTPS)
+python (Join-Path $root "scripts\deploy_amplify.py")
+
 Write-Host ""
-Write-Host "Site:        $siteUrl"
+Write-Host "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
+Write-Host "S3 fallback: $siteUrl"
 Write-Host "API:         $apiUrl"
 Write-Host "Data bucket: $dataBucket   (`$env:COOLWALK_BUCKET = '$dataBucket')"
 

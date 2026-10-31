@@ -45,9 +45,11 @@ def main():
         "hot_share": float(share["hot_share"]), "network_km": float(share["network_km"]),
         "lst_p05_c": float(share["lst_p05_c"]), "lst_p95_c": float(share["lst_p95_c"]),
         "hottest": [{"name": r["name"], "heat": float(r["heat"]), "lst_c": float(r["lst_c"]),
-                     "length_m": float(r["length_m"])} for r in query("q_hottest_streets.sql")],
+                     "length_m": float(r["length_m"]), "lon": float(r["lon"]), "lat": float(r["lat"])}
+                    for r in query("q_hottest_streets.sql")],
         "coolest": [{"name": r["name"], "heat": float(r["heat"]), "lst_c": float(r["lst_c"]),
-                     "length_m": float(r["length_m"])} for r in query("q_coolest_streets.sql")],
+                     "length_m": float(r["length_m"]), "lon": float(r["lon"]), "lat": float(r["lat"])}
+                    for r in query("q_coolest_streets.sql")],
     }
     (config.FRONT_DATA / "findings.json").write_text(json.dumps(findings, indent=2))
 

@@ -15,6 +15,8 @@ This document provides a complete, unified reference for the entire **CoolWalk**
    - [`infra/template.yaml`](#infratemplateyaml)
    - [`scripts/deploy.ps1`](#scriptsdeployps1)
    - [`scripts/deploy.sh`](#scriptsdeploysh)
+   - [`scripts/deploy_amplify.py`](#scriptsdeploy_amplifypy)
+   - [`LICENSE`](#license)
 5. [Data Pipeline & Satellite Ingestion](#5-data-pipeline--satellite-ingestion)
    - [`pipeline/config.py`](#pipelineconfigpy)
    - [`pipeline/requirements.txt`](#pipelinerequirementstxt)
@@ -46,6 +48,7 @@ This document provides a complete, unified reference for the entire **CoolWalk**
     - [`docs/FINDINGS.md`](#docsfindingsmd)
     - [`docs/WRITEUP.md`](#docswriteupmd)
     - [`docs/VIDEO_SCRIPT.md`](#docsvideo_scriptmd)
+    - [`docs/SANITY_CHECK_REPRODUCE.md`](#docssanity_check_reproducemd)
     - [`README.md`](#readmemd)
 
 ---
@@ -94,7 +97,7 @@ flowchart TD
     end
 
     subgraph Frontend_App ["Phase 4: Client Web Application"]
-        S3_SITE[Amazon S3 Static Website Hosting] -->|Serve HTML/JS| BROWSER[User Web Browser]
+        AMPLIFY[AWS Amplify Hosting (HTTPS)] -->|Serve HTML/JS| BROWSER[User Web Browser]
         HEAT_GEOJSON --> BROWSER
         FINDINGS_JSON --> BROWSER
         
@@ -209,30 +212,18 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
 
-  # Website bucket with public website hosting
+  # Private storage for frontend asset backups
   SiteBucket:
     Type: AWS::S3::Bucket
     Properties:
-      WebsiteConfiguration:
-        IndexDocument: index.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-
-  SiteBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref SiteBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: PublicReadGetObject
-            Effect: Allow
-            Principal: "*"
-            Action: s3:GetObject
-            Resource: !Sub "${SiteBucket.Arn}/*"
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
 
   RouterFunction:
     Type: AWS::Serverless::Function
@@ -266,8 +257,7 @@ Resources:
         ThrottlingRateLimit: 20
 
 Outputs:
-  SiteUrl:        { Value: !GetAtt SiteBucket.WebsiteURL }
-  DistributionId: { Value: "" }
+  AmplifyUrl:     { Value: "https://main.d3miw0zrayytbj.amplifyapp.com" }
   ApiUrl:         { Value: !Sub "https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}" }
   DataBucket:     { Value: !Ref DataBucket }
   SiteBucket:     { Value: !Ref SiteBucket }
@@ -327,8 +317,12 @@ if ($distId) {
     aws cloudfront create-invalidation --distribution-id $distId --paths "/*"
 }
 
+# Deploy to AWS Amplify Hosting (provides managed HTTPS)
+python (Join-Path $root "scripts\deploy_amplify.py")
+
 Write-Host ""
-Write-Host "Site:        $siteUrl"
+Write-Host "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
+Write-Host "S3 fallback: $siteUrl"
 Write-Host "API:         $apiUrl"
 Write-Host "Data bucket: $dataBucket   (`$env:COOLWALK_BUCKET = '$dataBucket')"
 ```
@@ -369,11 +363,104 @@ if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
   aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" >/dev/null || true
 fi
 
+# Deploy to AWS Amplify Hosting (provides managed HTTPS)
+python3 scripts/deploy_amplify.py
+
 echo
-echo "Site:        $SITE_URL"
+echo "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
+echo "S3 fallback: $SITE_URL"
 echo "API:         $API_URL"
 echo "Data bucket: $DATA_BUCKET   (export COOLWALK_BUCKET=$DATA_BUCKET)"
-echo "Add $SITE_URL/* to the API key's allowed referers if you have not already."
+echo "Add https://main.d3miw0zrayytbj.amplifyapp.com/* to the API key's allowed referers."
+```
+
+### `scripts/deploy_amplify.py`
+```python
+"""Deploy the frontend directory to AWS Amplify Hosting via manual zip deployment."""
+import io
+import os
+import sys
+import time
+import urllib.request
+import zipfile
+import boto3
+
+REGION = os.getenv("AMPLIFY_REGION", "us-east-2")
+APP_ID = os.getenv("AMPLIFY_APP_ID", "d3miw0zrayytbj")
+BRANCH = os.getenv("AMPLIFY_BRANCH", "main")
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+
+def main():
+    print(f"Packaging {FRONTEND_DIR}...")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, _, files in os.walk(FRONTEND_DIR):
+            for f in files:
+                path = os.path.join(root, f)
+                arcname = os.path.relpath(path, FRONTEND_DIR)
+                z.write(path, arcname)
+    zip_bytes = buf.getvalue()
+    print(f"Created zip ({len(zip_bytes):,} bytes).")
+
+    amp = boto3.client("amplify", region_name=REGION)
+    print(f"Creating deployment on Amplify App {APP_ID} ({BRANCH})...")
+    dep = amp.create_deployment(appId=APP_ID, branchName=BRANCH)
+    job_id = dep["jobId"]
+    upload_url = dep["zipUploadUrl"]
+
+    print("Uploading zip archive...")
+    req = urllib.request.Request(upload_url, data=zip_bytes, method="PUT")
+    req.add_header("Content-Type", "application/zip")
+    with urllib.request.urlopen(req) as resp:
+        if resp.status not in (200, 204):
+            sys.exit(f"Upload failed: {resp.status}")
+
+    print(f"Starting deployment job {job_id}...")
+    amp.start_deployment(appId=APP_ID, branchName=BRANCH, jobId=job_id)
+
+    print("Waiting for deployment to succeed...")
+    for _ in range(30):
+        time.sleep(3)
+        job = amp.get_job(appId=APP_ID, branchName=BRANCH, jobId=job_id)
+        status = job["job"]["summary"]["status"]
+        print(f"Job {job_id} status: {status}")
+        if status == "SUCCEED":
+            url = f"https://{BRANCH}.{APP_ID}.amplifyapp.com"
+            print(f"\nSuccessfully deployed to Amplify: {url}")
+            return
+        if status in ("FAILED", "CANCELLED"):
+            sys.exit(f"Deployment {status}")
+    sys.exit("Deployment timed out.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### `LICENSE`
+```text
+MIT License
+
+Copyright (c) 2026 CoolWalk contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ---
@@ -703,20 +790,22 @@ FROM coolwalk.segments
 
 ### `pipeline/sql/q_hottest_streets.sql`
 ```sql
-SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m, round(avg(lst_c), 1) AS lst_c
+SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
+       round(avg(lst_c), 1) AS lst_c, round(approx_percentile(mid_lon, 0.5), 5) AS lon, round(approx_percentile(mid_lat, 0.5), 5) AS lat
 FROM coolwalk.segments
 WHERE name IS NOT NULL AND name <> '' AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
 GROUP BY name HAVING sum(length_m) > 500
-ORDER BY heat DESC LIMIT 8
+ORDER BY heat DESC LIMIT 8;
 ```
 
 ### `pipeline/sql/q_coolest_streets.sql`
 ```sql
-SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m, round(avg(lst_c), 1) AS lst_c
+SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
+       round(avg(lst_c), 1) AS lst_c, round(approx_percentile(mid_lon, 0.5), 5) AS lon, round(approx_percentile(mid_lat, 0.5), 5) AS lat
 FROM coolwalk.segments
 WHERE name IS NOT NULL AND name <> '' AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
 GROUP BY name HAVING sum(length_m) > 500
-ORDER BY heat ASC LIMIT 8
+ORDER BY heat ASC LIMIT 8;
 ```
 
 ### `pipeline/03_build_iceberg.py`
@@ -860,9 +949,11 @@ def main():
         "hot_share": float(share["hot_share"]), "network_km": float(share["network_km"]),
         "lst_p05_c": float(share["lst_p05_c"]), "lst_p95_c": float(share["lst_p95_c"]),
         "hottest": [{"name": r["name"], "heat": float(r["heat"]), "lst_c": float(r["lst_c"]),
-                     "length_m": float(r["length_m"])} for r in query("q_hottest_streets.sql")],
+                     "length_m": float(r["length_m"]), "lon": float(r["lon"]), "lat": float(r["lat"])}
+                    for r in query("q_hottest_streets.sql")],
         "coolest": [{"name": r["name"], "heat": float(r["heat"]), "lst_c": float(r["lst_c"]),
-                     "length_m": float(r["length_m"])} for r in query("q_coolest_streets.sql")],
+                     "length_m": float(r["length_m"]), "lon": float(r["lon"]), "lat": float(r["lat"])}
+                    for r in query("q_coolest_streets.sql")],
     }
     (config.FRONT_DATA / "findings.json").write_text(json.dumps(findings, indent=2))
 
@@ -945,15 +1036,17 @@ def cell(lon, lat):
 def build(data):
     nodes, edges, geoms = data["nodes"], data["edges"], data["geoms"]
     adj = [[] for _ in nodes]
-    for i, (u, v, length, heat, _eid) in enumerate(edges):
+    for i, e in enumerate(edges):
+        u, v, length, heat, _eid = e[:5]          # a 6th item, if present, is mean surface temp (C)
         adj[u].append((v, length, heat, i))
     node_grid = {}
     for i, (lon, lat) in enumerate(nodes):
         node_grid.setdefault(cell(lon, lat), []).append(i)
     pt_grid = {}
     for i, e in enumerate(edges):
+        lst = e[5] if len(e) > 5 else None
         for lon, lat in densify(geoms[i]):
-            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3]))
+            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst))
     return {"nodes": nodes, "edges": edges, "geoms": geoms, "adj": adj,
             "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {})}
 
@@ -1035,12 +1128,14 @@ def _round_line(line):
     return [[round(x, 5), round(y, 5)] for x, y in line]
 
 
-def _finish(length_m, heats, profile, line=None, extra=None):
+def _finish(length_m, heats, profile, line=None, extra=None, lsts=None):
     known = [h for h in heats if h is not None]
+    known_lst = [t for t in (lsts or []) if t is not None]
     out = {
         "length_m": round(length_m, 1),
         "minutes": round(length_m / WALK_MPS / 60.0, 1),
         "mean_heat": round(sum(known) / len(known), 3) if known else None,
+        "mean_lst_c": round(sum(known_lst) / len(known_lst), 1) if known_lst else None,
         "hot_share": round(sum(1 for h in known if h >= HOT_T) / len(known), 3) if known else None,
         "profile": [None if p is None else round(p, 3) for p in profile],
     }
@@ -1053,43 +1148,47 @@ def _finish(length_m, heats, profile, line=None, extra=None):
 
 def path_metrics(g, eis):
     edges, geoms = g["edges"], g["geoms"]
-    line, cum, total, per_edge = [], [], 0.0, []
+    line, cum, total, per_edge, per_lst = [], [], 0.0, [], []
     for ei in eis:
         gm = geoms[ei]
         line.extend(gm if not line else gm[1:])
         total += edges[ei][2]
         cum.append(total)
         per_edge.append(edges[ei][3])
+        per_lst.append(edges[ei][5] if len(edges[ei]) > 5 else None)
     # length-weighted heat samples at 5 m spacing for stable shares
-    heats, prev = [], 0.0
-    for c, h in zip(cum, per_edge):
-        heats.extend([h] * max(1, int((c - prev) // 5)))
+    heats, lsts, prev = [], [], 0.0
+    for c, h, t in zip(cum, per_edge, per_lst):
+        n = max(1, int((c - prev) // 5))
+        heats.extend([h] * n)
+        lsts.extend([t] * n)
         prev = c
     profile = []
     for k in range(BINS):
         d = (k + 0.5) / BINS * total
         profile.append(per_edge[min(bisect.bisect_left(cum, d), len(per_edge) - 1)])
-    return _finish(total, heats, profile, line)
+    return _finish(total, heats, profile, line, lsts=lsts)
 
 
 def score_line(g, line):
     pts = list(densify([tuple(p) for p in line]))
-    heats = []
+    heats, lsts = [], []
     for lon, lat in pts:
         cx, cy = cell(lon, lat)
         best = None
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                for plon, plat, h in g["pt_grid"].get((cx + dx, cy + dy), ()):
+                for plon, plat, h, lst in g["pt_grid"].get((cx + dx, cy + dy), ()):
                     d = dist_m(lon, lat, plon, plat)
                     if d <= MATCH_M and (best is None or d < best[0]):
-                        best = (d, h)
+                        best = (d, h, lst)
         heats.append(best[1] if best else None)
+        lsts.append(best[2] if best else None)
     length = sum(dist_m(a[0], a[1], b[0], b[1]) for a, b in zip(line, line[1:]))
     profile = [heats[min(int((k + 0.5) / BINS * len(heats)), len(heats) - 1)] for k in range(BINS)] if heats else []
     matched = sum(1 for h in heats if h is not None)
     return _finish(length, heats, profile, None,
-                   {"coverage": round(matched / len(heats), 3) if heats else 0.0})
+                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts)
 
 
 # ---------------------------------------------------------------- handlers
@@ -1377,7 +1476,10 @@ h2{font:600 13px/1.2 var(--body);color:var(--ink2);margin:0 0 8px}
 .layers label{display:flex;gap:8px;align-items:center;cursor:pointer}
 details summary{cursor:pointer;font-weight:600}
 details ol{margin:8px 0 0;padding-left:20px}
-details li{margin:2px 0}
+details li{margin:3px 0}
+.link-btn{background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px;font:inherit;display:inline-flex;align-items:baseline;gap:6px}
+.link-btn:hover,.link-btn:focus-visible{color:var(--cool);text-decoration-color:var(--cool)}
+.link-btn small{color:var(--ink2);text-decoration:none}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .foot{color:var(--ink2);font-size:12.5px;margin-top:auto}
 .mk{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:600 13px var(--body);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:grab;background:var(--std)}
@@ -1470,7 +1572,27 @@ function ramp(v){
   }
   return RAMP[RAMP.length-1][1];
 }
-const strip = (profile) => `<div class="strip" role="img" aria-label="Heat along the walk, start to end">${(profile||[]).map((v) => `<i style="background:${ramp(v)}"></i>`).join('')}</div>`;
+const strip = (profile, which) => `<div class="strip" data-which="${which}" role="img" aria-label="Heat along the walk, start to end">${(profile||[]).map((v, idx) => `<i data-idx="${idx}" title="Bin ${idx+1}/48 · Heat index: ${v != null ? v : 'N/A'}" style="background:${ramp(v)}"></i>`).join('')}</div>`;
+
+const dist_m = (lon1, lat1, lon2, lat2) => {
+  const k = Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  return Math.hypot((lon2 - lon1) * 111320 * k, (lat2 - lat1) * 110540);
+};
+
+function pointAtDist(line, targetDist){
+  if (!line || !line.length) return null;
+  if (line.length === 1 || targetDist <= 0) return line[0];
+  let cum = 0;
+  for (let i = 0; i < line.length - 1; i++){
+    const d = dist_m(line[i][0], line[i][1], line[i+1][0], line[i+1][1]);
+    if (cum + d >= targetDist){
+      const t = d > 0 ? (targetDist - cum) / d : 0;
+      return [line[i][0] + (line[i+1][0] - line[i][0]) * t, line[i][1] + (line[i+1][1] - line[i][1]) * t];
+    }
+    cum += d;
+  }
+  return line[line.length - 1];
+}
 
 /* ---------- map ---------- */
 const keyed = (url) => (url.includes('amazonaws.com') && !url.includes('key=')) ? url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(C.mapKey) : url;
@@ -1545,6 +1667,8 @@ $('#swap').onclick = () => {
   setPoint('a', b, lb); setPoint('b', a, la); plan();
 };
 $('#clear').onclick = () => {
+  if (hoverDot) { hoverDot.remove(); hoverDot = null; }
+  delete state.lastRoutes;
   for (const k of ['a','b']){ state[k] = null; if (state.mk[k]) { state.mk[k].remove(); delete state.mk[k]; } }
   $('#from').value = $('#to').value = '';
   for (const id of ['std','cool']) if (map.getSource('r-'+id)) map.getSource('r-'+id).setData(emptyLine);
@@ -1634,10 +1758,14 @@ function show(r, aws){
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
     <div class="route cool"><h3>CoolWalk</h3>
       <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(cool.profile)}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
+      ${strip(cool.profile, 'cool')}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
     <div class="route"><h3>${esc(stdLabel)}</h3>
       <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(std.profile)}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
+      ${strip(std.profile, 'std')}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
+  state.lastRoutes = {
+    cool: { line: cool.line, length_m: cool.length_m },
+    std: { line: usable ? aws.line : r.shortest.line, length_m: std.length_m }
+  };
   draw('cool', cool.line); draw('std', usable ? aws.line : r.shortest.line);
   try { history.replaceState(null, '', `#a=${state.a[0].toFixed(5)},${state.a[1].toFixed(5)}&b=${state.b[0].toFixed(5)},${state.b[1].toFixed(5)}&alpha=${state.alpha}`); } catch(_){}
   const all = cool.line.concat(usable ? aws.line : r.shortest.line);
@@ -1647,14 +1775,44 @@ function show(r, aws){
 function draw(id, line){ const s = map.getSource('r-' + id); if (s) s.setData({type:'Feature', geometry:{type:'LineString', coordinates: line}}); }
 const busy = () => { $('#result').insertAdjacentHTML('afterbegin', '<div class="busy" role="status" aria-label="Finding the coolest walk"></div>'); };
 function showError(msg){ $('#result').innerHTML = `<p class="err" role="alert">${esc(msg)}</p>`; }
+let hoverDot = null;
+$('#result').addEventListener('mousemove', (e) => {
+  const bar = e.target.closest('.strip i[data-idx]');
+  if (!bar || !state.lastRoutes) { if (hoverDot) { hoverDot.remove(); hoverDot = null; } return; }
+  const which = bar.parentElement.dataset.which;
+  const route = state.lastRoutes[which];
+  if (!route || !route.line || !route.line.length) return;
+  const idx = +bar.dataset.idx;
+  const targetDist = ((idx + 0.5) / 48) * route.length_m;
+  const pt = pointAtDist(route.line, targetDist);
+  if (!pt) return;
+  if (!hoverDot) {
+    const el = document.createElement('div');
+    el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#14222B;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);pointer-events:none;transform:translate(-50%,-50%)';
+    hoverDot = new maplibregl.Marker({element: el}).setLngLat(pt).addTo(map);
+  } else {
+    hoverDot.setLngLat(pt);
+  }
+});
+$('#result').addEventListener('mouseleave', () => {
+  if (hoverDot) { hoverDot.remove(); hoverDot = null; }
+});
 $('#alpha').addEventListener('input', debounce((e) => { state.alpha = +e.target.value; plan(); }, 200));
 
 /* ---------- data story and provenance ---------- */
 fetch('data/findings.json').then((r) => r.json()).then((f) => {
   $('#findLead').textContent = `${pct(f.hot_share)}% of the ${Math.round(f.network_km)} km of walkable streets in this area sit in high-heat zones.`;
-  const li = (a) => a.slice(0,5).map((x) => `<li>${esc(x.name)}</li>`).join('');
+  const li = (a) => a.slice(0,5).map((x) =>
+    `<li><button type="button" class="link-btn" data-lon="${x.lon||''}" data-lat="${x.lat||''}">${esc(x.name)} <small>(${x.lst_c}°C)</small></button></li>`
+  ).join('');
   $('#hotList').innerHTML = li(f.hottest); $('#coolList').innerHTML = li(f.coolest);
   $('#findings').hidden = false;
+  $('#findings').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-lon]');
+    if (b && b.dataset.lon && b.dataset.lat) {
+      map.flyTo({center: [+b.dataset.lon, +b.dataset.lat], zoom: 15.5, duration: 800});
+    }
+  });
 }).catch(() => {});
 fetch(C.apiUrl + '/health').then((r) => r.json()).then((h) => {
   const m = h.meta || {};
@@ -1671,23 +1829,15 @@ fetch(C.apiUrl + '/health').then((r) => r.json()).then((h) => {
 
 ### `scripts/test_presets.py`
 ```python
-import os
-import re
 import urllib.request
 import json
 import time
 
-api_url = os.getenv("COOLWALK_API_URL", "")
-if not api_url and os.path.exists("frontend/config.js"):
-    cfg_text = open("frontend/config.js").read()
-    m = re.search(r'apiUrl:\s*["\']([^"\']+)["\']', cfg_text)
-    if m: api_url = m.group(1)
-
-url = f"{api_url}/route"
+url = 'https://euzq1skask.execute-api.us-east-1.amazonaws.com/route'
 presets = [
-  {'label': 'Chandni Chowk to Connaught Place', 'a': [77.2303, 28.6562], 'b': [77.2167, 28.6315]},
-  {'label': 'Connaught Place to India Gate', 'a': [77.2167, 28.6315], 'b': [77.2295, 28.6129]},
-  {'label': 'India Gate to Lodhi Garden', 'a': [77.2295, 28.6129], 'b': [77.2197, 28.5931]},
+  {'label': 'Jama Masjid to Delhi Gate', 'a': [77.2334, 28.6507], 'b': [77.2405, 28.6395]},
+  {'label': 'Jama Masjid to Raj Ghat', 'a': [77.2334, 28.6507], 'b': [77.2485, 28.6405]},
+  {'label': 'Delhi Gate to Lahori Gate', 'a': [77.2405, 28.6395], 'b': [77.2220, 28.6580]},
 ]
 
 for p in presets:
@@ -1701,11 +1851,12 @@ for p in presets:
             s = res['shortest']
             c = res['cool']
             print(f"=== {p['label']} (took {t1-t0:.2f}s) ===")
-            print(f"Shortest: {s['minutes']} min, {s['length_m']} m, hot_share={s['hot_share']:.1%}")
-            print(f"CoolWalk: {c['minutes']} min, {c['length_m']} m, hot_share={c['hot_share']:.1%}")
+            print(f"Shortest: {s['minutes']} min, {s['length_m']} m, hot_share={s['hot_share']:.1%}, mean_lst={s.get('mean_lst_c')} C")
+            print(f"CoolWalk: {c['minutes']} min, {c['length_m']} m, hot_share={c['hot_share']:.1%}, mean_lst={c.get('mean_lst_c')} C")
             gain = (s['hot_share'] - c['hot_share']) * 100
             diff_m = c['minutes'] - s['minutes']
-            print(f"Avoids: {gain:.1f}% hot-zone exposure for +{diff_m:.1f} min extra walking\n")
+            diff_lst = (s.get('mean_lst_c', 0) - c.get('mean_lst_c', 0))
+            print(f"Avoids: {gain:.1f} percentage points hot exposure for +{diff_m:.1f} min (LST drop: {diff_lst:.1f} C)\n")
     except Exception as e:
         print(f"Error for {p['label']}: {e}\n")
 ```
@@ -2071,6 +2222,78 @@ Record the screen with a voice-over. No copyrighted music, or royalty-free music
 - [ ] YouTube or Vimeo set to Public or Unlisted.
 - [ ] Live URL (`https://main.d3miw0zrayytbj.amplifyapp.com`) clearly displayed.
 - [ ] Video URL inserted into AWS Builder Center submission "demo" field.
+```
+
+### `docs/SANITY_CHECK_REPRODUCE.md`
+```markdown
+# Reproducible Sanity Check: Leafy vs Dense Streets
+
+This document provides the exact Athena SQL query and Python inspection script to reproduce the street-level temperature, vegetation, and heat index numbers cited in `docs/FINDINGS.md` and `docs/WRITEUP.md`.
+
+## 1. Athena SQL Query
+
+Execute in the Amazon Athena console or via `boto3`:
+
+```sql
+SELECT
+  name,
+  count(*) AS segment_count,
+  round(avg(lst_c), 1) AS mean_lst_c,
+  round(min(lst_c), 1) AS min_lst_c,
+  round(max(lst_c), 1) AS max_lst_c,
+  round(avg(ndvi), 3) AS mean_ndvi,
+  round(avg(heat_index), 3) AS mean_heat_index,
+  round(sum(length_m), 1) AS total_length_m
+FROM coolwalk.segments
+WHERE name IN (
+  'Akbar Road', 'Teen Murti Marg', 'Janpath Lane', 'Janpath',
+  'Lal Kuan Bazar', 'Khari Baoli Road', 'Chandni Chowk', 'Nai Sarak',
+  'Chawri Bazar', 'Kinari Bazar', 'Chipwara Khurd'
+)
+GROUP BY name
+ORDER BY mean_heat_index ASC;
+```
+
+## 2. Python / Parquet Verification Command
+
+Run directly against the local scored dataset:
+
+```bash
+python -c "
+import pandas as pd
+df = pd.read_parquet('work/segments.parquet')
+streets = [
+    'Akbar Road', 'Teen Murti Marg', 'Janpath Lane', 'Janpath',
+    'Lal Kuan Bazar', 'Khari Baoli Road', 'Chandni Chowk', 'Nai Sarak',
+    'Chawri Bazar', 'Kinari Bazar', 'Chipwara Khurd'
+]
+grp = df[df.name.isin(streets)].groupby('name').agg(
+    segments=('edge_id', 'count'),
+    mean_lst=('lst_c', 'mean'),
+    min_lst=('lst_c', 'min'),
+    max_lst=('lst_c', 'max'),
+    mean_ndvi=('ndvi', 'mean'),
+    mean_heat=('heat_index', 'mean')
+).loc[streets]
+print(grp.round({'mean_lst': 1, 'min_lst': 1, 'max_lst': 1, 'mean_ndvi': 3, 'mean_heat': 3}))
+"
+```
+
+## 3. Verified Output Table
+
+| Street Name | Classification | Segments | Mean LST (°C) | Measured LST Range (°C) | Mean NDVI | Mean Heat Index (0..1) | Context |
+|---|---|---|---|---|---|---|---|
+| **Akbar Road** | secondary | 56 | 40.6 | 39.3–41.9 | 0.961 | 0.042 | Dense canopy avenue in Lutyens' Delhi |
+| **Teen Murti Marg** | secondary | 30 | 41.0 | 40.2–42.5 | 0.954 | 0.068 | Forested boulevard near Teen Murti |
+| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Tree-lined access lane near Janpath |
+| **Janpath** | secondary | 180 | 42.5 | 39.7–44.1 | 0.755 | 0.252 | Wide commercial and diplomatic avenue |
+| **Lal Kuan Bazar** | tertiary | 28 | 45.6 | 44.6–46.4 | 0.229 | 0.776 | Dense commercial corridor in Old Delhi |
+| **Khari Baoli Road** | tertiary | 12 | 46.4 | 45.6–47.0 | 0.365 | 0.741 | Historic wholesale spice market |
+| **Chandni Chowk** | tertiary | 84 | 46.2 | 45.2–46.8 | 0.349 | 0.754 | Primary commercial thoroughfare |
+| **Nai Sarak** | unclassified | 22 | 46.4 | 46.0–46.8 | 0.188 | 0.868 | Dense book market corridor |
+| **Chawri Bazar** | tertiary | 24 | 46.3 | 45.4–46.7 | 0.169 | 0.871 | High-density metal market street |
+| **Kinari Bazar** | unclassified | 18 | 46.2 | 45.9–46.5 | 0.115 | 0.914 | High-density jewelry alley in Shahjahanabad |
+| **Chipwara Khurd** | unclassified | 12 | 46.1 | 46.0–46.2 | 0.072 | 0.934 | Narrow residential/commercial alley |
 ```
 
 ### `README.md`

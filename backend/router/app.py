@@ -61,7 +61,7 @@ def build(data):
     nodes, edges, geoms = data["nodes"], data["edges"], data["geoms"]
     adj = [[] for _ in nodes]
     for i, e in enumerate(edges):
-        u, v, length, heat = e[0], e[1], e[2], e[3]
+        u, v, length, heat, _eid = e[:5]          # a 6th item, if present, is mean surface temp (C)
         adj[u].append((v, length, heat, i))
     node_grid = {}
     for i, (lon, lat) in enumerate(nodes):
@@ -172,55 +172,47 @@ def _finish(length_m, heats, profile, line=None, extra=None, lsts=None):
 
 def path_metrics(g, eis):
     edges, geoms = g["edges"], g["geoms"]
-    line, cum, total, per_edge, per_edge_lst = [], [], 0.0, [], []
+    line, cum, total, per_edge, per_lst = [], [], 0.0, [], []
     for ei in eis:
         gm = geoms[ei]
         line.extend(gm if not line else gm[1:])
         total += edges[ei][2]
         cum.append(total)
         per_edge.append(edges[ei][3])
-        per_edge_lst.append(edges[ei][5] if len(edges[ei]) > 5 else None)
-    # length-weighted heat and lst samples at 5 m spacing for stable shares
+        per_lst.append(edges[ei][5] if len(edges[ei]) > 5 else None)
+    # length-weighted heat samples at 5 m spacing for stable shares
     heats, lsts, prev = [], [], 0.0
-    for c, h, t in zip(cum, per_edge, per_edge_lst):
-        count = max(1, int((c - prev) // 5))
-        heats.extend([h] * count)
-        if t is not None:
-            lsts.extend([t] * count)
+    for c, h, t in zip(cum, per_edge, per_lst):
+        n = max(1, int((c - prev) // 5))
+        heats.extend([h] * n)
+        lsts.extend([t] * n)
         prev = c
     profile = []
     for k in range(BINS):
         d = (k + 0.5) / BINS * total
         profile.append(per_edge[min(bisect.bisect_left(cum, d), len(per_edge) - 1)])
-    return _finish(total, heats, profile, line, None, lsts)
+    return _finish(total, heats, profile, line, lsts=lsts)
 
 
 def score_line(g, line):
     pts = list(densify([tuple(p) for p in line]))
-    heats = []
-    lsts = []
+    heats, lsts = [], []
     for lon, lat in pts:
         cx, cy = cell(lon, lat)
         best = None
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                for item in g["pt_grid"].get((cx + dx, cy + dy), ()):
-                    plon, plat, h = item[0], item[1], item[2]
-                    t = item[3] if len(item) > 3 else None
+                for plon, plat, h, lst in g["pt_grid"].get((cx + dx, cy + dy), ()):
                     d = dist_m(lon, lat, plon, plat)
                     if d <= MATCH_M and (best is None or d < best[0]):
-                        best = (d, h, t)
-        if best:
-            heats.append(best[1])
-            lsts.append(best[2])
-        else:
-            heats.append(None)
-            lsts.append(None)
+                        best = (d, h, lst)
+        heats.append(best[1] if best else None)
+        lsts.append(best[2] if best else None)
     length = sum(dist_m(a[0], a[1], b[0], b[1]) for a, b in zip(line, line[1:]))
     profile = [heats[min(int((k + 0.5) / BINS * len(heats)), len(heats) - 1)] for k in range(BINS)] if heats else []
     matched = sum(1 for h in heats if h is not None)
     return _finish(length, heats, profile, None,
-                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts)
+                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts)
 
 
 # ---------------------------------------------------------------- handlers

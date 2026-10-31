@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: CoolWalk - heat-aware walking routes (S3, CloudFront, Lambda, HTTP API)
+Description: CoolWalk - heat-aware walking routes (S3, Lambda, HTTP API, Amplify Hosting)
 
 Resources:
   # Holds the routing graph, Athena results, and the Iceberg table
@@ -16,30 +16,18 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
 
-  # Website bucket with public website hosting
+  # Private storage for frontend asset backups
   SiteBucket:
     Type: AWS::S3::Bucket
     Properties:
-      WebsiteConfiguration:
-        IndexDocument: index.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-
-  SiteBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref SiteBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: PublicReadGetObject
-            Effect: Allow
-            Principal: "*"
-            Action: s3:GetObject
-            Resource: !Sub "${SiteBucket.Arn}/*"
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
 
   RouterFunction:
     Type: AWS::Serverless::Function
@@ -73,8 +61,7 @@ Resources:
         ThrottlingRateLimit: 20
 
 Outputs:
-  SiteUrl:        { Value: !GetAtt SiteBucket.WebsiteURL }
-  DistributionId: { Value: "" }
+  AmplifyUrl:     { Value: "https://main.d3miw0zrayytbj.amplifyapp.com" }
   ApiUrl:         { Value: !Sub "https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}" }
   DataBucket:     { Value: !Ref DataBucket }
   SiteBucket:     { Value: !Ref SiteBucket }
