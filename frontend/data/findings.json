@@ -134,5 +134,101 @@
       "lon": 77.21256,
       "lat": 28.59957
     }
-  ]
+  ],
+  "place_exposure": {
+    "bus_stops": {
+      "total": 353,
+      "hot": 23,
+      "hot_pct": 0.065
+    },
+    "schools": {
+      "total": 85,
+      "hot": 17,
+      "hot_pct": 0.2
+    },
+    "hospitals": {
+      "total": 73,
+      "hot": 24,
+      "hot_pct": 0.329
+    },
+    "hottest_bus_stops": [
+      {
+        "name": "Sarai Kale Khan",
+        "heat": 0.9546,
+        "lst_c": 46.2,
+        "lon": 77.259091,
+        "lat": 28.587024
+      },
+      {
+        "name": "Azad Market",
+        "heat": 0.9447,
+        "lst_c": 46.4,
+        "lon": 77.206994,
+        "lat": 28.664388
+      },
+      {
+        "name": "Sarai Kale Khan",
+        "heat": 0.9304,
+        "lst_c": 46.0,
+        "lon": 77.259045,
+        "lat": 28.587143
+      },
+      {
+        "name": "Sarai Kale Khan ISBT",
+        "heat": 0.9291,
+        "lst_c": 46.0,
+        "lon": 77.257884,
+        "lat": 28.590599
+      },
+      {
+        "name": "Azad Market",
+        "heat": 0.92,
+        "lst_c": 46.4,
+        "lon": 77.207083,
+        "lat": 28.664633
+      }
+    ],
+    "coolest_parks": [
+      {
+        "name": "Flower Valley",
+        "heat": 0.0,
+        "lst_c": 39.5,
+        "ndvi": 0.915,
+        "lon": 77.246483,
+        "lat": 28.595023
+      },
+      {
+        "name": "nan",
+        "heat": 0.0,
+        "lst_c": 39.4,
+        "ndvi": 0.902,
+        "lon": 77.239685,
+        "lat": 28.663749
+      },
+      {
+        "name": "nan",
+        "heat": 0.0,
+        "lst_c": 40.1,
+        "ndvi": 0.883,
+        "lon": 77.229119,
+        "lat": 28.605342
+      },
+      {
+        "name": "nan",
+        "heat": 0.0,
+        "lst_c": 39.7,
+        "ndvi": 0.89,
+        "lon": 77.248088,
+        "lat": 28.593632
+      },
+      {
+        "name": "Sunder Nursery",
+        "heat": 0.0,
+        "lst_c": 39.1,
+        "ndvi": 0.921,
+        "lon": 77.246871,
+        "lat": 28.596886
+      }
+    ]
+  }
 }

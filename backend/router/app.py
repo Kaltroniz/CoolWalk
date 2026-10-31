@@ -71,9 +71,10 @@ def build(data):
         lst = e[5] if len(e) > 5 else None
         ndvi = e[6] if len(e) > 6 else None
         for lon, lat in densify(geoms[i]):
-            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst, ndvi))
+            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst, ndvi, i))
     return {"nodes": nodes, "edges": edges, "geoms": geoms, "adj": adj,
-            "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {})}
+            "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {}),
+            "places": data.get("places", []), "val": data.get("val")}
 
 
 def load():
@@ -153,7 +154,7 @@ def _round_line(line):
     return [[round(x, 5), round(y, 5)] for x, y in line]
 
 
-def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=None):
+def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=None, val_lst_c=None):
     known = [h for h in heats if h is not None]
     known_lst = [t for t in (lsts or []) if t is not None]
     known_ndvi = [v for v in (ndvis or []) if v is not None]
@@ -166,6 +167,8 @@ def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=No
         "mean_ndvi": round(sum(known_ndvi) / len(known_ndvi), 3) if known_ndvi else None,
         "profile": [None if p is None else round(p, 3) for p in profile],
     }
+    if val_lst_c is not None:
+        out["val_lst_c"] = val_lst_c
     if line is not None:
         out["line"] = _round_line(line)
     if extra:
@@ -196,12 +199,19 @@ def path_metrics(g, eis):
     for k in range(BINS):
         d = (k + 0.5) / BINS * total
         profile.append(per_edge[min(bisect.bisect_left(cum, d), len(per_edge) - 1)])
-    return _finish(total, heats, profile, line, lsts=lsts, ndvis=ndvis)
+    val_lst = g.get("val", {}).get("lst") if isinstance(g.get("val"), dict) else None
+    val_lst_c = None
+    if val_lst and eis:
+        val_lst_c = []
+        for vl in val_lst:
+            w_sum = sum(vl[ei] * edges[ei][2] for ei in eis if ei < len(vl) and vl[ei] is not None)
+            val_lst_c.append(round(w_sum / total, 1) if total > 0 else None)
+    return _finish(total, heats, profile, line, lsts=lsts, ndvis=ndvis, val_lst_c=val_lst_c)
 
 
 def score_line(g, line):
     pts = list(densify([tuple(p) for p in line]))
-    heats, lsts, ndvis = [], [], []
+    heats, lsts, ndvis, matched_eis = [], [], [], []
     for lon, lat in pts:
         cx, cy = cell(lon, lat)
         best = None
@@ -211,17 +221,28 @@ def score_line(g, line):
                     plon, plat, h = pt_tuple[:3]
                     lst = pt_tuple[3] if len(pt_tuple) > 3 else None
                     ndvi = pt_tuple[4] if len(pt_tuple) > 4 else None
+                    ei = pt_tuple[5] if len(pt_tuple) > 5 else None
                     d = dist_m(lon, lat, plon, plat)
                     if d <= MATCH_M and (best is None or d < best[0]):
-                        best = (d, h, lst, ndvi)
+                        best = (d, h, lst, ndvi, ei)
         heats.append(best[1] if best else None)
         lsts.append(best[2] if best else None)
         ndvis.append(best[3] if best else None)
+        if best and best[4] is not None:
+            matched_eis.append(best[4])
     length = sum(dist_m(a[0], a[1], b[0], b[1]) for a, b in zip(line, line[1:]))
     profile = [heats[min(int((k + 0.5) / BINS * len(heats)), len(heats) - 1)] for k in range(BINS)] if heats else []
     matched = sum(1 for h in heats if h is not None)
+    val_lst = g.get("val", {}).get("lst") if isinstance(g.get("val"), dict) else None
+    val_lst_c = None
+    if val_lst and matched_eis:
+        val_lst_c = []
+        for vl in val_lst:
+            mvals = [vl[ei] for ei in matched_eis if ei < len(vl) and vl[ei] is not None]
+            val_lst_c.append(round(sum(mvals) / len(mvals), 1) if mvals else None)
     return _finish(length, heats, profile, None,
-                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts, ndvis=ndvis)
+                   {"coverage": round(matched / len(heats), 3) if heats else 0.0},
+                   lsts=lsts, ndvis=ndvis, val_lst_c=val_lst_c)
 
 
 # ---------------------------------------------------------------- handlers
@@ -278,8 +299,11 @@ def score(g, body):
 
 
 def health(g):
+    val_info = [s.get("date") for s in g.get("val", {}).get("scenes", [])] if g.get("val") else []
     return {"ok": True, "bbox": g["meta"].get("bbox"), "meta": g["meta"],
             "nodes": len(g["nodes"]), "edges": len(g["edges"]),
+            "places": len(g.get("places", [])),
+            "validation_scenes": val_info,
             "hot_threshold": HOT_T, "walk_speed_mps": WALK_MPS}
 
 
@@ -301,6 +325,9 @@ def handler(event, _context=None):
             return _resp(200, route(g, body))
         if path.endswith("/score"):
             return _resp(200, score(g, body))
+        if path.endswith("/refuge"):
+            import refuge, sys
+            return _resp(200, refuge.run(g, body, sys.modules[__name__]))
         return _resp(404, {"error": "Not found."})
     except ApiError as e:
         return _resp(e.status, {"error": str(e)})

@@ -1,0 +1,111 @@
+# CoolWalk Dataset & Analytics Dictionary
+
+CoolWalk processes open satellite earth observation data and street geometries into accessible spatial formats and serverless analytical tables.
+
+---
+
+## 1. Primary Files & Download Links
+
+| File | Location | Format | Description |
+|---|---|---|---|
+| **Heat Grid Layer** | [`frontend/data/heat_grid.geojson`](file:///c:/Users/Acer/OneDrive/Documents/hackathons/CoolWalk/frontend/data/heat_grid.geojson) | GeoJSON (Polygon) | 2,092 spatial cells (150 m resolution) with normalized heat scores. [Download GeoJSON](data/heat_grid.geojson) |
+| **City Findings** | [`frontend/data/findings.json`](file:///c:/Users/Acer/OneDrive/Documents/hackathons/CoolWalk/frontend/data/findings.json) | JSON | Aggregated statistics, high-heat network share, and top hottest/coolest streets with centroids. |
+| **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 street segments with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
+| **Routing Graph** | `work/graph.json.gz` / `s3://<DataBucket>/router/graph.json.gz` | Gzip JSON | Compact indexed graph representation consumed by AWS Lambda. |
+
+---
+
+## 2. GeoJSON Schema: `heat_grid.geojson`
+
+Each polygon represents a 150 m cell (`0.0015°` latitude/longitude grid) spanning central Delhi:
+
+- `h`: Raw heat score (`0.0` to `1.0`), computed as `0.6 * normalized_LST + 0.4 * (1 - normalized_NDVI)`.
+- `hs`: Clamped and rescaled heat score (`0.0` to `1.0`) relative to the 5th and 95th percentiles of the study area for map visualization.
+- `geometry`: Polygon bounding coordinates `[[ [x0, y0], [x0+w, y0], [x0+w, y0+h], [x0, y0+h], [x0, y0] ]]`.
+
+---
+
+## 3. Apache Iceberg Table: `coolwalk.segments`
+
+Stored in Apache Iceberg format on Amazon S3 and cataloged in AWS Glue / Amazon Athena:
+
+```sql
+CREATE TABLE coolwalk.segments (
+  edge_id BIGINT,
+  u BIGINT,
+  v BIGINT,
+  key BIGINT,
+  name STRING,
+  highway STRING,
+  length_m DOUBLE,
+  mid_lon DOUBLE,
+  mid_lat DOUBLE,
+  lst_c DOUBLE,
+  ndvi DOUBLE,
+  heat_index DOUBLE
+)
+PARTITIONED BY (bucket(16, edge_id))
+LOCATION 's3://<DataBucket>/iceberg/segments/'
+TBLPROPERTIES ('table_type'='ICEBERG', 'format'='parquet');
+```
+
+### Field Definitions:
+- `edge_id`: Unique 64-bit integer segment identifier.
+- `u`, `v`: OpenStreetMap intersection node identifiers.
+- `name`: Street name from OpenStreetMap (`NULL` or empty for unnamed alleys).
+- `highway`: OSM road hierarchy classification (`primary`, `secondary`, `tertiary`, `residential`, `pedestrian`, `living_street`, etc.).
+- `length_m`: Metric Euclidean length along segment centerline geometry.
+- `mid_lon`, `mid_lat`: Midpoint coordinates of segment centerline.
+- `lst_c`: Mean Land Surface Temperature in degrees Celsius from USGS Landsat 8 TIRS Band 10.
+- `ndvi`: Mean Normalized Difference Vegetation Index from Copernicus Sentinel-2 B4/B8.
+- `heat_index`: Composite heat score (`0.0` to `1.0`). Scores $\ge 0.66$ indicate high-heat zones.
+
+---
+
+## 4. Amazon Athena Queries Used for Findings
+
+### 4.1 Overall High-Heat Network Share
+```sql
+SELECT
+  round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 3) AS hot_share,
+  round(sum(length_m) / 1000.0, 1) AS network_km,
+  round(approx_percentile(lst_c, 0.05), 1) AS lst_p05_c,
+  round(approx_percentile(lst_c, 0.95), 1) AS lst_p95_c
+FROM coolwalk.segments;
+```
+
+### 4.2 Top Hottest Named Corridors
+```sql
+SELECT
+  name,
+  round(avg(heat_index), 3) AS heat,
+  round(sum(length_m)) AS length_m,
+  round(avg(lst_c), 1) AS lst_c,
+  round(max_by(mid_lon, length_m), 5) AS lon,
+  round(max_by(mid_lat, length_m), 5) AS lat
+FROM coolwalk.segments
+WHERE name IS NOT NULL AND name <> '' 
+  AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
+GROUP BY name 
+HAVING sum(length_m) > 500
+ORDER BY heat DESC 
+LIMIT 8;
+```
+
+### 4.3 Top Coolest Named Corridors
+```sql
+SELECT
+  name,
+  round(avg(heat_index), 3) AS heat,
+  round(sum(length_m)) AS length_m,
+  round(avg(lst_c), 1) AS lst_c,
+  round(max_by(mid_lon, length_m), 5) AS lon,
+  round(max_by(mid_lat, length_m), 5) AS lat
+FROM coolwalk.segments
+WHERE name IS NOT NULL AND name <> '' 
+  AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
+GROUP BY name 
+HAVING sum(length_m) > 500
+ORDER BY heat ASC 
+LIMIT 8;
+```

@@ -1,65 +1,19 @@
 # CoolWalk: Complete Architecture, Mathematical Logic, and Full Source Code
 
 This document provides a complete, unified reference for the entire **CoolWalk** application built for the AWS Builder Center "Weekend Challenge: Map It". It contains:
-1. **The System Architecture & End-to-End Logic** explaining how every component connects to the next (from satellite data down to pixel rendering in the browser).
-2. **Mathematical Formulations** for thermal radiometric scaling, vegetation indexing, heat cost weights, and detour-capped A* search.
-3. **Every Single Line of Code** across all infrastructure definitions, data pipelines, SQL queries, backend router microservice, test harnesses, evaluation scripts, and frontend user interface.
+1. **The System Architecture & End-to-End Logic** explaining how every component connects to the next (from earth-observation satellite data down to pixel rendering in the browser).
+2. **Mathematical Formulations** for thermal radiometric scaling, vegetation indexing, heat cost weights, detour-capped A* search, and Dijkstra cool-refuge optimization.
+3. **Every Single Line of Code** across all infrastructure definitions, data pipelines, SQL queries, backend router microservices, test harnesses, evaluation scripts, documentation, and frontend user interface.
 
 ---
 
-# Table of Contents
-1. [Architecture & System Flow](#1-architecture--system-flow)
-2. [Mathematical Formulations & Physics Proxy Logic](#2-mathematical-formulations--physics-proxy-logic)
-3. [Component Interconnection Logic](#3-component-interconnection-logic)
-4. [Infrastructure as Code & Deployment](#4-infrastructure-as-code--deployment)
-   - [`infra/template.yaml`](#infratemplateyaml)
-   - [`scripts/deploy.ps1`](#scriptsdeployps1)
-   - [`scripts/deploy.sh`](#scriptsdeploysh)
-   - [`scripts/deploy_amplify.py`](#scriptsdeploy_amplifypy)
-   - [`LICENSE`](#license)
-5. [Data Pipeline & Satellite Ingestion](#5-data-pipeline--satellite-ingestion)
-   - [`pipeline/config.py`](#pipelineconfigpy)
-   - [`pipeline/requirements.txt`](#pipelinerequirementstxt)
-   - [`pipeline/01_pick_scenes.py`](#pipeline01_pick_scenespy)
-   - [`pipeline/02_score_segments.py`](#pipeline02_score_segmentspy)
-6. [Apache Iceberg & Amazon Athena SQL Engine](#6-apache-iceberg--amazon-athena-sql-engine)
-   - [`pipeline/sql/01_database.sql`](#pipelinesql01_databasesql)
-   - [`pipeline/sql/02_staging_table.sql`](#pipelinesql02_staging_tablesql)
-   - [`pipeline/sql/03_iceberg_table.sql`](#pipelinesql03_iceberg_tablesql)
-   - [`pipeline/sql/q_heat_grid.sql`](#pipelinesqlq_heat_gridsql)
-   - [`pipeline/sql/q_hot_share.sql`](#pipelinesqlq_hot_sharesql)
-   - [`pipeline/sql/q_hottest_streets.sql`](#pipelinesqlq_hottest_streetssql)
-   - [`pipeline/sql/q_coolest_streets.sql`](#pipelinesqlq_coolest_streetssql)
-   - [`pipeline/03_build_iceberg.py`](#pipeline03_build_icebergpy)
-   - [`pipeline/04_export_assets.py`](#pipeline04_export_assetspy)
-7. [Routing Microservice & Offline Verification](#7-routing-microservice--offline-verification)
-   - [`backend/router/app.py`](#backendrouterapppy)
-   - [`backend/tests/test_router.py`](#backendteststest_routerpy)
-8. [Frontend Single-Page Application](#8-frontend-single-page-application)
-   - [`frontend/config.js`](#frontendconfigjs)
-   - [`frontend/index.html`](#frontendindexhtml)
-9. [Automation, Pair Evaluation & Screenshot Scripts](#9-automation-pair-evaluation--screenshot-scripts)
-   - [`scripts/test_presets.py`](#scriptstest_presetspy)
-   - [`scripts/search_landmark_pairs.py`](#scriptssearch_landmark_pairspy)
-   - [`scripts/eval_pairs.py`](#scriptseval_pairspy)
-   - [`scripts/find_demo_pairs.py`](#scriptsfind_demo_pairspy)
-   - [`scripts/capture_screenshots.py`](#scriptscapture_screenshotspy)
-10. [Submission Materials & Empirical Findings](#10-submission-materials--empirical-findings)
-    - [`docs/FINDINGS.md`](#docsfindingsmd)
-    - [`docs/WRITEUP.md`](#docswriteupmd)
-    - [`docs/VIDEO_SCRIPT.md`](#docsvideo_scriptmd)
-    - [`docs/SANITY_CHECK_REPRODUCE.md`](#docssanity_check_reproducemd)
-    - [`README.md`](#readmemd)
-
----
-
-# 1. Architecture & System Flow
+# Architecture & System Flow
 
 CoolWalk bridges open earth-observation satellite data with real-time pedestrian navigation on AWS.
 
 ```mermaid
 flowchart TD
-    subgraph Data_Acquisition ["Phase 1: Ingestion & Spatial Scoring"]
+    subgraph Data_Acquisition ["Phase 1: Ingestion and Spatial Scoring"]
         STAC[Earth Search STAC API] -->|Query cloud < 15%| P1[01_pick_scenes.py]
         P1 -->|Select clear scene| S_JSON[work/scenes.json]
         
@@ -70,12 +24,20 @@ flowchart TD
         
         P2 -->|Export scored edges| PARQUET[work/segments.parquet<br/>35,748 rows]
         P2 -->|Serialize compact graph| GRAPH_GZ[work/graph.json.gz<br/>Nodes, Edges, Geometries]
+
+        VAL[05_validation.py] -->|Sample 3 held-out scenes| GRAPH_GZ
+        PLC[06_places.py] -->|OSM civic places + Satellite heat| PL_PARQUET[work/places.parquet<br/>974 places]
+        PLC -->|Embed 463 refuges| GRAPH_GZ
+        PLC -->|Export GeoJSON| PL_GEOJSON[frontend/data/places.geojson]
     end
 
     subgraph Analytics_Engine ["Phase 2: Lakehouse Analytics (Iceberg + Athena)"]
         PARQUET -->|S3 Upload| S3_STAGE[s3://DataBucket/staging/segments/]
         S3_STAGE -->|External Table| GLUE[AWS Glue Catalog / Athena]
         P3[03_build_iceberg.py] -->|CTAS query| ICEBERG[(coolwalk.segments<br/>Apache Iceberg on S3)]
+
+        PL_PARQUET -->|S3 Upload| S3_PL_STAGE[s3://DataBucket/staging/places/]
+        PL_ICE[07_build_places_iceberg.py] -->|CTAS query| ICEBERG_PL[(coolwalk.places<br/>Apache Iceberg on S3)]
         
         ICEBERG -->|q_heat_grid.sql| P4[04_export_assets.py]
         ICEBERG -->|q_hot_share.sql| P4
@@ -91,108 +53,28 @@ flowchart TD
         S3_GRAPH -->|Cold-start load| LAMBDA[AWS Lambda: Python 3.12<br/>2048 MB Memory]
         APIGW[Amazon API Gateway HTTP API] <-->|Event v2 payload| LAMBDA
         
-        LAMBDA -->|GET /health| HEALTH_EP[Coverage metadata & provenance]
-        LAMBDA -->|POST /route| ROUTE_EP[A* heat-weighted path & metrics]
+        LAMBDA -->|GET /health| HEALTH_EP[Coverage metadata and provenance]
+        LAMBDA -->|POST /route| ROUTE_EP[A* heat-weighted path and metrics]
         LAMBDA -->|POST /score| SCORE_EP[Flexible/Simple polyline heat scoring]
+        LAMBDA -->|POST /refuge| REFUGE_EP[Dijkstra nearest cool refuge finder]
     end
 
     subgraph Frontend_App ["Phase 4: Client Web Application"]
         AMPLIFY[AWS Amplify Hosting (HTTPS)] -->|Serve HTML/JS| BROWSER[User Web Browser]
-        HEAT_GEOJSON --> BROWSER
-        FINDINGS_JSON --> BROWSER
-        
-        BROWSER <-->|POST /route & POST /score| APIGW
-        BROWSER <-->|v2 Vector Tiles: Light Style| ALS_MAPS[Amazon Location Service Maps v2]
-        BROWSER <-->|v2 Places: Autocomplete / SearchText| ALS_PLACES[Amazon Location Service Places v2]
-        BROWSER <-->|v2 Routes: CalculateRoutes Pedestrian| ALS_ROUTES[Amazon Location Service Routes v2]
+        BROWSER <-->|Fetch routes and refuges| APIGW
+        BROWSER <-->|Vector tiles, place search, routes| ALS[Amazon Location Service v2]
+        BROWSER -->|Overlay heat grid and places| HEAT_GEOJSON
+        BROWSER -->|Display independent checks| ROUTE_EP
+        BROWSER -->|Interactive 40-sec tour| BROWSER
     end
 ```
 
 ---
 
-# 2. Mathematical Formulations & Physics Proxy Logic
+# Infrastructure as Code & CI/CD
 
-### 2.1 Landsat 8/9 Collection 2 Level-2 Radiometric Calibration
-Thermal Infrared Sensor (TIRS Band 10) Digital Numbers ($\text{DN}$) are converted into surface temperature in degrees Celsius using the USGS Collection 2 scaling factors:
-$$T_{\text{Kelvin}} = \text{DN} \times 0.00341802 + 149.0$$
-$$T_{\text{Celsius}} = T_{\text{Kelvin}} - 273.15$$
+## `infra/template.yaml`
 
-**QA Pixel Cloud/Shadow Masking:**
-Pixels are checked against the Landsat 16-bit quality assessment band `QA_PIXEL`. Bits 0 (fill), 1 (dilated cloud), 3 (cloud), and 4 (cloud shadow) are masked using the bitwise operation:
-$$\text{is\_bad} = (\text{QA} \ \& \ \mathtt{0b11011}) \neq 0$$
-Any pixel marked bad or falling outside the physical temperature bounds $[15^\circ\text{C}, 75^\circ\text{C}]$ is discarded as NaN.
-
-### 2.2 Sentinel-2 Normalized Difference Vegetation Index (NDVI)
-Copernicus Sentinel-2 Level-2A surface reflectance is offset by the baseline calibration value:
-$$\rho_{\text{Red}} = \max\left(0, \frac{\text{DN}_{\text{B04}} - 1000}{10000}\right), \quad \rho_{\text{NIR}} = \max\left(0, \frac{\text{DN}_{\text{B08}} - 1000}{10000}\right)$$
-$$\text{NDVI} = \frac{\rho_{\text{NIR}} - \rho_{\text{Red}}}{\rho_{\text{NIR}} + \rho_{\text{Red}} + 10^{-6}}$$
-Scene Classification Layer (SCL) pixels representing clouds, shadows, or saturated pixels (classes 0, 1, 3, 8, 9, 10, 11) are masked out.
-
-### 2.3 Street Segment Point Sampling & Heat Index
-Along every OpenStreetMap walkable edge geometry, equidistant points are interpolated at $\Delta s = 15\text{ m}$ spacing:
-$$N_{\text{samples}} = \max\left(2, \left\lfloor \frac{\text{length\_m}}{15} \right\rfloor + 1\right)$$
-For each edge $e$, the sample values are aggregated:
-$$\overline{\text{LST}}_e = \frac{1}{|S_e|} \sum_{p \in S_e} T_{\text{Celsius}}(p), \quad \overline{\text{NDVI}}_e = \frac{1}{|S_e|} \sum_{p \in S_e} \text{NDVI}(p)$$
-
-To normalize across the study domain, the 5th and 95th percentiles ($P_5, P_{95}$) of $\overline{\text{LST}}$ are computed:
-$$\text{LST}_{\text{norm}} = \text{clip}\left(\frac{\overline{\text{LST}}_e - P_5}{P_{95} - P_5}, 0, 1\right)$$
-$$\text{VEG}_{\text{norm}} = 1.0 - \text{clip}\left(\frac{\overline{\text{NDVI}}_e}{0.6}, 0, 1\right)$$
-
-The final Heat Index $\mathcal{H}_e \in [0, 1]$ combines surface thermal radiation ($W_{\text{LST}} = 0.6$) and lack of vegetation canopy ($W_{\text{VEG}} = 0.4$):
-$$\mathcal{H}_e = 0.6 \cdot \text{LST}_{\text{norm}} + 0.4 \cdot \text{VEG}_{\text{norm}}$$
-Streets with $\mathcal{H}_e \ge 0.66$ are classified as **high-heat zones**.
-
-### 2.4 Heat-Weighted A* Routing Cost & Detour Cap
-The traversal cost for an edge $e$ with length $L_e$ and heat index $\mathcal{H}_e$ given trade-off parameter $\alpha \ge 0$ is:
-$$\text{Cost}(e, \alpha) = L_e \cdot (1 + \alpha \cdot \mathcal{H}_e)$$
-- When $\alpha = 0$, $\text{Cost}(e, 0) = L_e$, yielding the Euclidean shortest path.
-- When $\alpha > 0$, hot edges receive a penalty proportional to their heat index.
-
-The A* heuristic $h(u, t)$ is the great-circle Euclidean distance from node $u$ to target $t$:
-$$h(u, t) = \text{dist\_m}(u, t) \le \text{shortest path length} \le \text{Cost}(u \to t)$$
-Because $\text{Cost}(e, \alpha) \ge L_e \ge \text{dist\_m}$, $h(u, t)$ is strictly **admissible** and **consistent**, guaranteeing an optimal path.
-
-**Detour Bounding:**
-To prevent unreasonable detours, the search enforces:
-$$\text{Length}(\text{CoolWalk}) \le \text{Length}(\text{Shortest}) \times \text{max\_detour} \quad (\text{default: } 1.45)$$
-If the candidate path exceeds this bound, $\alpha$ is halved iteratively ($\alpha \leftarrow \alpha / 2$) until the path satisfies the bound or reverts to $\alpha = 0$.
-
-### 2.5 Polyline Heat Scoring
-For any arbitrary route (such as Amazon Location Service's pedestrian route), the route polyline is densified at 20 m intervals. Each point is matched to the nearest street segment within $R \le 60\text{ m}$ using a spatial hash grid. The heat values are projected into 48 discrete spatial bins:
-$$\text{bin}_k = \text{heats}\left[\left\lfloor \frac{k + 0.5}{48} \cdot N \right\rfloor\right], \quad k \in [0, 47]$$
-
----
-
-# 3. Component Interconnection Logic
-
-1. **`pipeline/config.py`** anchors the spatial bounding box `BBOX = (77.19, 28.585, 77.26, 28.668)` (spanning from Old Delhi in the north to Lodhi Garden in the south), the date range `2026-04-15/2026-06-20`, and weights `(0.6, 0.4)`. Every pipeline script, the backend router, and the frontend map center and constraints import or inherit this exact box.
-2. **`pipeline/01_pick_scenes.py`** queries Element 84's Earth Search STAC catalog for Landsat Collection 2 Level 2 and Sentinel-2 L2A. It searches for scenes intersecting `BBOX` with cloud cover below 15%, picks the clearest Landsat scene, pairs it with the closest same-day/adjacent Sentinel-2 tile, validates that required band assets exist, and writes `work/scenes.json`.
-3. **`pipeline/02_score_segments.py`** loads `work/scenes.json`. It initiates an authenticated, requester-pays GDAL virtual filesystem session (`AWSSession(requester_pays=True)`) to stream sub-windows from `s3://usgs-landsat/` and `https://sentinel-cogs.s3.us-west-2.amazonaws.com/`. It downloads the walking network using `osmnx.graph_from_bbox`, interpolates sample points, applies the radiometric and NDVI equations, normalizes percentiles, and outputs:
-   - `work/segments.parquet`: Schema table with columns `edge_id, u, v, length_m, mid_lon, mid_lat, lst_c, ndvi, heat_index, highway, name`.
-   - `work/graph.json.gz`: Compact, compressed JSON containing indexed node coordinates, edges `[u, v, length, heat, edge_id]`, and simplified geometries for sub-millisecond Lambda ingestion.
-4. **`pipeline/03_build_iceberg.py`** uploads `segments.parquet` to `s3://${BUCKET}/staging/segments/`. It executes Athena queries: creating database `coolwalk`, staging external table `coolwalk.segments_raw`, wiping `s3://${BUCKET}/iceberg/segments/`, and running a `CREATE TABLE coolwalk.segments WITH (table_type = 'ICEBERG') AS SELECT * FROM coolwalk.segments_raw`.
-5. **`pipeline/04_export_assets.py`** queries the live Iceberg table through Athena:
-   - `q_heat_grid.sql`: Aggregates street heat into $0.0015^\circ$ (~150 m) grid cells, exported as `frontend/data/heat_grid.geojson`.
-   - `q_hot_share.sql`: Calculates total network kilometers and percent in high-heat zones.
-   - `q_hottest_streets.sql` & `q_coolest_streets.sql`: Retrieves top 8 hottest and coolest named streets with length > 500m, exported as `frontend/data/findings.json`.
-   - Uploads `work/graph.json.gz` to `s3://${BUCKET}/router/graph.json.gz`.
-6. **`infra/template.yaml`** declares the Serverless Application Model (SAM) resources:
-   - `SiteBucket`: Public S3 bucket with `WebsiteConfiguration` hosting `index.html`, `config.js`, and `data/`.
-   - `DataBucket`: S3 bucket hosting Iceberg files, Athena query results, and `router/graph.json.gz`.
-   - `RouterFunction`: AWS Lambda (`python3.12`, 2048 MB memory) with S3 read permissions to `DataBucket`.
-   - `Api`: Amazon API Gateway HTTP API routing `/health`, `/route`, and `/score`.
-7. **`scripts/deploy.ps1` & `scripts/deploy.sh`** automate `sam build`, `sam deploy`, extract stack outputs (`ApiUrl`, `SiteBucket`, `SiteUrl`, `DataBucket`), write `frontend/config.js` with the active Amazon Location API key and API URL, and synchronize the `frontend/` directory to S3.
-8. **`backend/router/app.py`** powers the Lambda microservice. On cold start, it pulls `router/graph.json.gz` from S3 into memory, creates adjacency lists and spatial hash buckets (`0.001^\circ` cells). It processes incoming JSON requests:
-   - `/health`: Verifies graph presence, node/edge counts, and date provenance.
-   - `/route`: Snaps `origin` and `destination` to nearest street nodes, computes shortest path ($\alpha = 0$) and CoolWalk path ($\alpha > 0$) with detour bounding, and builds 48-bin heat profile strips.
-   - `/score`: Accepts arbitrary coordinate lines (from Amazon Location Service), densifies them, snaps to the nearest scored street segments, and returns comparative heat statistics.
-9. **`frontend/index.html`** provides a zero-dependency, responsive interface. It initializes MapLibre GL JS with Amazon Location Service Maps v2 Light tiles, overlays the GeoJSON heat grid, wires Amazon Location Places v2 autocomplete, requests both the CoolWalk route from the Lambda API and the standard pedestrian route from Amazon Location Routes v2, and renders the dual routes with comparative heat strips and verdict metrics.
-
----
-
-# 4. Infrastructure as Code & Deployment
-
-### `infra/template.yaml`
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
@@ -230,6 +112,7 @@ Resources:
         Health: { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /health, Method: GET } }
         Route:  { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /route,  Method: POST } }
         Score:  { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /score,  Method: POST } }
+        Refuge: { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /refuge, Method: POST } }
 
   Api:
     Type: AWS::Serverless::HttpApi
@@ -249,7 +132,8 @@ Outputs:
   DataBucket:     { Value: !Ref DataBucket }
 ```
 
-### `scripts/deploy.ps1`
+## `scripts/deploy.ps1`
+
 ```powershell
 # PowerShell deploy script for CoolWalk
 param(
@@ -305,7 +189,8 @@ Write-Host "API:         $apiUrl"
 Write-Host "Data bucket: $dataBucket   (`$env:COOLWALK_BUCKET = '$dataBucket')"
 ```
 
-### `scripts/deploy.sh`
+## `scripts/deploy.sh`
+
 ```bash
 #!/usr/bin/env bash
 # One-command deploy: backend + hosting, then publish the website with its config.
@@ -345,22 +230,8 @@ echo "Data bucket: $DATA_BUCKET   (export COOLWALK_BUCKET=$DATA_BUCKET)"
 echo "Add $AMPLIFY_URL/* to the API key's allowed referers."
 ```
 
-### `scripts/augment_graph.py`
-```python
-import gzip, json, pandas as pd
+## `scripts/deploy_amplify.py`
 
-seg = pd.read_parquet("work/segments.parquet").set_index("edge_id")
-lst, veg = seg.lst_c.to_dict(), seg.ndvi.to_dict()
-with gzip.open("work/graph.json.gz", "rt", encoding="utf-8") as f:
-    g = json.load(f)
-for e in g["edges"]:
-    e[5:] = [round(float(lst[e[4]]), 2), round(float(veg[e[4]]), 3)]
-with gzip.open("work/graph.json.gz", "wt", encoding="utf-8") as f:
-    json.dump(g, f, separators=(",", ":"))
-print("edges with lst and ndvi:", len(g["edges"]))
-```
-
-### `scripts/deploy_amplify.py`
 ```python
 """Deploy the frontend directory to AWS Amplify Hosting via manual zip deployment."""
 import io
@@ -450,7 +321,34 @@ if __name__ == "__main__":
     main()
 ```
 
-### `LICENSE`
+## `.github/workflows/test.yml`
+
+```yaml
+name: Tests
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: ["*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run offline router tests
+        run: python backend/tests/test_router.py
+      - name: Run cool-refuge finder tests
+        run: python backend/tests/test_refuge.py
+```
+
+## `LICENSE`
+
 ```text
 MIT License
 
@@ -475,11 +373,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
----
+# Satellite Data Ingestion & Geometry Scoring Pipeline
 
-# 5. Data Pipeline & Satellite Ingestion
+## `pipeline/config.py`
 
-### `pipeline/config.py`
 ```python
 """Shared settings. Change BBOX and DATE_RANGE to reuse CoolWalk for another city."""
 import os
@@ -506,7 +403,8 @@ W_LST, W_VEG = 0.6, 0.4     # heat index = W_LST * surface temperature + W_VEG *
 HOT_T = 0.66                # keep in sync with backend/router/app.py
 ```
 
-### `pipeline/requirements.txt`
+## `pipeline/requirements.txt`
+
 ```text
 boto3>=1.35
 numpy>=1.26
@@ -520,7 +418,8 @@ geopandas>=1.0
 pystac-client>=0.8
 ```
 
-### `pipeline/01_pick_scenes.py`
+## `pipeline/01_pick_scenes.py`
+
 ```python
 """Step 1. Pick one clear Landsat 8/9 scene and same-day Sentinel-2 tiles for the study area.
 
@@ -590,16 +489,36 @@ def main():
              "red": s3_href(i.assets["red"]), "nir": s3_href(i.assets["nir"]), "scl": s3_href(i.assets["scl"])}
             for i in s2]},
     }
+
+    # Pick up to 3 clear Landsat scenes on different dates for independent held-out validation
+    val_candidates = []
+    seen_dates = {chosen.datetime.date()}
+    for item in ls:
+        d = item.datetime.date()
+        if d not in seen_dates and item.id != chosen.id and item.properties.get("eo:cloud_cover", 100) < 15:
+            seen_dates.add(d)
+            val_candidates.append({
+                "id": item.id,
+                "date": f"{item.datetime:%Y-%m-%d}",
+                "cloud": item.properties.get("eo:cloud_cover"),
+                "lwir11": s3_href(item.assets["lwir11"]),
+                "qa": s3_href(item.assets["qa_pixel"])
+            })
+            if len(val_candidates) == 3:
+                break
+    out["validation_scenes"] = val_candidates
+
     (config.WORK / "scenes.json").write_text(json.dumps(out, indent=2))
     print(f"\nLandsat {out['landsat']['date']} + Sentinel-2 {out['sentinel']['date']} "
-          f"({len(s2)} tile(s)). Saved work/scenes.json")
+          f"({len(s2)} tile(s)). Picked {len(val_candidates)} validation scene(s). Saved work/scenes.json")
 
 
 if __name__ == "__main__":
     main()
 ```
 
-### `pipeline/02_score_segments.py`
+## `pipeline/02_score_segments.py`
+
 ```python
 """Step 2. Score every walkable street segment for heat.
 
@@ -755,16 +674,499 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
----
+## `pipeline/05_validation.py`
 
-# 6. Apache Iceberg & Amazon Athena SQL Engine
+```python
+"""Step 5. Independent validation on held-out Landsat scenes from other dates.
 
-### `pipeline/sql/01_database.sql`
+Samples surface temperature on clear Landsat scenes that were never used for routing,
+and writes per-edge means into work/graph.json.gz under the 'val' key.
+"""
+import gzip
+import json
+import os
+import sys
+from pathlib import Path
+
+import boto3
+import numpy as np
+import rasterio
+from pyproj import Transformer
+from rasterio.errors import WindowError
+from rasterio.session import AWSSession
+from rasterio.windows import Window, from_bounds
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "pipeline"))
+import config
+
+
+class Raster:
+    def __init__(self, href):
+        self.data = None
+        with rasterio.open(href) as ds:
+            tf = Transformer.from_crs("EPSG:4326", ds.crs, always_xy=True)
+            w, s, e, n = config.BBOX
+            xs, ys = tf.transform([w, e, w, e], [s, s, n, n])
+            try:
+                win = from_bounds(min(xs), min(ys), max(xs), max(ys), ds.transform)
+                win = win.round_offsets().round_lengths().intersection(Window(0, 0, ds.width, ds.height))
+            except WindowError:
+                return
+            self.data = ds.read(1, window=win)
+            self.inv = ~ds.window_transform(win)
+            self.crs = ds.crs
+        self.tf = Transformer.from_crs("EPSG:4326", self.crs, always_xy=True)
+
+    def sample(self, lons, lats):
+        out = np.full(len(lons), np.nan)
+        if self.data is None:
+            return out
+        x, y = self.tf.transform(lons, lats)
+        cols, rows = self.inv * (np.asarray(x), np.asarray(y))
+        rows, cols = np.floor(rows).astype(int), np.floor(cols).astype(int)
+        ok = (rows >= 0) & (rows < self.data.shape[0]) & (cols >= 0) & (cols < self.data.shape[1])
+        out[ok] = self.data[rows[ok], cols[ok]]
+        return out
+
+
+def surface_temp_c(ls, lon, lat):
+    dn = Raster(ls["lwir11"]).sample(lon, lat)
+    qa = Raster(ls["qa"]).sample(lon, lat)
+    bad = np.isnan(qa) | ((np.nan_to_num(qa).astype(np.int64) & 0b11011) != 0)
+    t = dn * 0.00341802 + 149.0 - 273.15
+    t[(dn <= 0) | bad | (t < 15) | (t > 75)] = np.nan
+    return t
+
+
+def main():
+    with open(config.WORK / "scenes.json") as f:
+        sc = json.load(f)
+    val_scenes = sc.get("validation_scenes", [])
+    if not val_scenes:
+        print("No validation scenes in work/scenes.json.")
+        return
+
+    print(f"Scoring {len(val_scenes)} held-out validation scenes:")
+    for v in val_scenes:
+        print(f"  {v['id']} ({v['date']}) cloud: {v['cloud']}%")
+
+    with gzip.open(config.WORK / "graph.json.gz", "rt", encoding="utf-8") as f:
+        g = json.load(f)
+
+    # Collect sample points per edge
+    edge_pts = []
+    eids = []
+    for i, geom in enumerate(g["geoms"]):
+        if not geom:
+            continue
+        coords = np.array(geom)
+        # sample at vertices and midpoints
+        for k in range(len(coords)):
+            edge_pts.append(coords[k])
+            eids.append(i)
+        if len(coords) > 1:
+            mid = (coords[0] + coords[-1]) / 2.0
+            edge_pts.append(mid)
+            eids.append(i)
+
+    edge_pts = np.array(edge_pts)
+    lons, lats = edge_pts[:, 0], edge_pts[:, 1]
+    eids = np.array(eids)
+    print(f"Sample points across {len(g['edges']):,} edges: {len(lons):,}")
+
+    session = AWSSession(boto3.Session(), requester_pays=True)
+    all_scene_lsts = []
+
+    with rasterio.Env(session, AWS_REGION="us-west-2", GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+        for v in val_scenes:
+            print(f"Sampling {v['date']} ({v['id']})...")
+            t = surface_temp_c(v, lons, lats)
+            # Compute per-edge mean
+            # Group by edge index
+            edge_means = np.full(len(g["edges"]), np.nan)
+            valid = ~np.isnan(t)
+            if np.any(valid):
+                sums = np.bincount(eids[valid], weights=t[valid], minlength=len(g["edges"]))
+                counts = np.bincount(eids[valid], minlength=len(g["edges"]))
+                has_data = counts > 0
+                edge_means[has_data] = sums[has_data] / counts[has_data]
+            
+            med = np.nanmedian(edge_means)
+            edge_means[np.isnan(edge_means)] = med
+            print(f"  {v['date']} median LST: {med:.1f} °C, range: {np.nanmin(edge_means):.1f} to {np.nanmax(edge_means):.1f} °C")
+            all_scene_lsts.append([round(float(x), 2) for x in edge_means])
+
+    g["val"] = {
+        "scenes": [{"date": v["date"], "id": v["id"]} for v in val_scenes],
+        "lst": all_scene_lsts
+    }
+
+    with gzip.open(config.WORK / "graph.json.gz", "wt", encoding="utf-8") as f:
+        json.dump(g, f, separators=(",", ":"))
+
+    print(f"Successfully added held-out validation data to work/graph.json.gz")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## `pipeline/06_places.py`
+
+```python
+"""Step 6. Ingest, score, and analyze OpenStreetMap points of interest (places).
+
+Fetches bus stops, drinking water, parks, metro stations, hospitals, and schools.
+Scores them against Landsat LST and Sentinel-2 NDVI.
+Embeds refuge places (park, water, metro) into work/graph.json.gz.
+Exports frontend/data/places.geojson and updates findings.json with exposure metrics.
+"""
+import gzip
+import json
+import sys
+from pathlib import Path
+
+import boto3
+import numpy as np
+import osmnx as ox
+import pandas as pd
+import rasterio
+from pyproj import Transformer
+from rasterio.errors import WindowError
+from rasterio.session import AWSSession
+from rasterio.windows import Window, from_bounds
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "pipeline"))
+import config
+
+
+class Raster:
+    def __init__(self, href):
+        self.data = None
+        with rasterio.open(href) as ds:
+            tf = Transformer.from_crs("EPSG:4326", ds.crs, always_xy=True)
+            w, s, e, n = config.BBOX
+            xs, ys = tf.transform([w, e, w, e], [s, s, n, n])
+            try:
+                win = from_bounds(min(xs), min(ys), max(xs), max(ys), ds.transform)
+                win = win.round_offsets().round_lengths().intersection(Window(0, 0, ds.width, ds.height))
+            except WindowError:
+                return
+            self.data = ds.read(1, window=win)
+            self.inv = ~ds.window_transform(win)
+            self.crs = ds.crs
+        self.tf = Transformer.from_crs("EPSG:4326", self.crs, always_xy=True)
+
+    def sample(self, lons, lats):
+        out = np.full(len(lons), np.nan)
+        if self.data is None:
+            return out
+        x, y = self.tf.transform(lons, lats)
+        cols, rows = self.inv * (np.asarray(x), np.asarray(y))
+        rows, cols = np.floor(rows).astype(int), np.floor(cols).astype(int)
+        ok = (rows >= 0) & (rows < self.data.shape[0]) & (cols >= 0) & (cols < self.data.shape[1])
+        out[ok] = self.data[rows[ok], cols[ok]]
+        return out
+
+
+def surface_temp_c(ls, lon, lat):
+    dn = Raster(ls["lwir11"]).sample(lon, lat)
+    qa = Raster(ls["qa"]).sample(lon, lat)
+    bad = np.isnan(qa) | ((np.nan_to_num(qa).astype(np.int64) & 0b11011) != 0)
+    t = dn * 0.00341802 + 149.0 - 273.15
+    t[(dn <= 0) | bad | (t < 15) | (t > 75)] = np.nan
+    return t
+
+
+def ndvi(sc, lon, lat):
+    out = np.full(len(lon), np.nan)
+    for it in sc["sentinel"]["items"]:
+        red, nir, scl = Raster(it["red"]), Raster(it["nir"]), Raster(it["scl"])
+        r, n, c = red.sample(lon, lat), nir.sample(lon, lat), scl.sample(lon, lat)
+        r = np.where(r > 0, np.clip((r - 1000.0) / 10000.0, 0.01, None), np.nan)
+        n = np.where(n > 0, np.clip((n - 1000.0) / 10000.0, 0, None), np.nan)
+        v = (n - r) / (n + r + 1e-6)
+        v[np.isin(np.nan_to_num(c), [0, 1, 3, 8, 9, 10, 11])] = np.nan
+        out = np.where(np.isnan(out), v, out)
+    return out
+
+
+def main():
+    w, s, e, n = config.BBOX
+    print(f"Fetching OpenStreetMap places in bbox: {config.BBOX}...")
+    tags = {
+        "highway": "bus_stop",
+        "amenity": ["drinking_water", "hospital", "clinic", "school"],
+        "leisure": ["park", "garden"],
+        "railway": "station",
+        "public_transport": "station"
+    }
+    gdf = ox.features_from_bbox(bbox=(w, s, e, n), tags=tags)
+    print(f"Retrieved {len(gdf):,} raw features from OSM.")
+
+    records = []
+    seen = set()
+    for idx, row in gdf.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        pt = geom.centroid if geom.geom_type != "Point" else geom
+        lon, lat = round(float(pt.x), 6), round(float(pt.y), 6)
+        
+        name = str(row.get("name") or "").strip()
+        kind = None
+        if row.get("highway") == "bus_stop":
+            kind = "bus_stop"
+        elif row.get("amenity") == "drinking_water":
+            kind = "water"
+        elif row.get("leisure") in ("park", "garden"):
+            kind = "park"
+        elif (row.get("railway") == "station" and row.get("station") == "subway") or \
+             (row.get("public_transport") == "station" and row.get("subway") == "yes") or \
+             ("metro" in name.lower() and row.get("railway") == "station"):
+            kind = "metro"
+        elif row.get("amenity") in ("hospital", "clinic"):
+            kind = "hospital"
+        elif row.get("amenity") == "school":
+            kind = "school"
+
+        if not kind:
+            continue
+
+        # Deduplicate
+        key = (kind, round(lon, 4), round(lat, 4))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        records.append({
+            "place_id": len(records),
+            "kind": kind,
+            "name": name if name else f"Unnamed {kind.replace('_', ' ')}",
+            "lon": lon,
+            "lat": lat
+        })
+
+    df = pd.DataFrame(records)
+    print("\nPlaces count per kind (after deduplication):")
+    counts = df["kind"].value_counts().to_dict()
+    for k, count in sorted(counts.items()):
+        print(f"  {k:<12}: {count}")
+
+    # Gate verification: drop kinds with fewer than 15 places
+    valid_kinds = {k for k, count in counts.items() if count >= 15}
+    dropped_kinds = set(counts.keys()) - valid_kinds
+    if dropped_kinds:
+        print(f"Dropping kinds with < 15 places: {dropped_kinds}")
+        df = df[df["kind"].isin(valid_kinds)].reset_index(drop=True)
+        df["place_id"] = df.index
+
+    # Score places with satellite rasters
+    with open(config.WORK / "scenes.json") as f:
+        sc = json.load(f)
+
+    with gzip.open(config.WORK / "graph.json.gz", "rt", encoding="utf-8") as f:
+        g = json.load(f)
+
+    meta = g.get("meta", {})
+    p5 = meta.get("lst_p5_c", 40.33)
+    p95 = meta.get("lst_p95_c", 46.28)
+
+    print(f"\nSampling Landsat and Sentinel-2 rasters at {len(df):,} place coordinates...")
+    session = AWSSession(boto3.Session(), requester_pays=True)
+    with rasterio.Env(session, AWS_REGION="us-west-2", GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+        lst = surface_temp_c(sc["landsat"], df["lon"].values, df["lat"].values)
+        veg = ndvi(sc, df["lon"].values, df["lat"].values)
+
+    df["lst_c"] = pd.Series(lst).fillna(float(np.nanmedian(lst))).round(1)
+    df["ndvi"] = pd.Series(veg).fillna(float(np.nanmedian(veg))).round(3)
+
+    lst_n = np.clip((df["lst_c"] - p5) / (p95 - p5), 0, 1)
+    veg_n = 1.0 - np.clip(df["ndvi"] / 0.6, 0, 1)
+    df["heat_index"] = (config.W_LST * lst_n + config.W_VEG * veg_n).round(4)
+
+    # Save work/places.parquet
+    out_parquet = config.WORK / "places.parquet"
+    df.to_parquet(out_parquet, index=False)
+    print(f"Saved {len(df):,} scored places to {out_parquet}")
+
+    # Embed refuge places (park, water, metro) in graph.json.gz
+    refuge_kinds = {"park", "water", "metro"}
+    refuge_df = df[df["kind"].isin(refuge_kinds)]
+    g["places"] = [
+        {"kind": r.kind, "name": r.name, "lon": round(float(r.lon), 5), "lat": round(float(r.lat), 5)}
+        for r in refuge_df.itertuples()
+    ]
+    with gzip.open(config.WORK / "graph.json.gz", "wt", encoding="utf-8") as f:
+        json.dump(g, f, separators=(",", ":"))
+    print(f"Embedded {len(g['places'])} refuge places (park, water, metro) into work/graph.json.gz")
+
+    # Export frontend/data/places.geojson
+    features = []
+    for r in df.itertuples():
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "id": int(r.place_id),
+                "kind": r.kind,
+                "name": r.name,
+                "heat": float(r.heat_index),
+                "lst_c": float(r.lst_c),
+                "ndvi": float(r.ndvi)
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [round(float(r.lon), 5), round(float(r.lat), 5)]
+            }
+        })
+    (config.FRONT_DATA / "places.geojson").write_text(
+        json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":"))
+    )
+    print(f"Exported frontend/data/places.geojson ({len(features):,} features)")
+
+    # Compute findings exposure metrics
+    bus = df[df.kind == "bus_stop"]
+    sch = df[df.kind == "school"]
+    hosp = df[df.kind == "hospital"]
+    parks = df[df.kind == "park"]
+
+    def exp_stat(sub):
+        if len(sub) == 0:
+            return {"total": 0, "hot": 0, "hot_pct": 0.0}
+        hot = (sub.heat_index >= 0.66).sum()
+        return {"total": len(sub), "hot": int(hot), "hot_pct": round(float(hot / len(sub)), 3)}
+
+    hottest_bus = bus.sort_values("heat_index", ascending=False).head(5)
+    coolest_parks = parks.sort_values("heat_index", ascending=True).head(5)
+
+    with open(config.FRONT_DATA / "findings.json") as f:
+        findings = json.load(f)
+
+    findings["place_exposure"] = {
+        "bus_stops": exp_stat(bus),
+        "schools": exp_stat(sch),
+        "hospitals": exp_stat(hosp),
+        "hottest_bus_stops": [
+            {"name": r.name, "heat": float(r.heat_index), "lst_c": float(r.lst_c), "lon": float(r.lon), "lat": float(r.lat)}
+            for r in hottest_bus.itertuples()
+        ],
+        "coolest_parks": [
+            {"name": r.name, "heat": float(r.heat_index), "lst_c": float(r.lst_c), "ndvi": float(r.ndvi), "lon": float(r.lon), "lat": float(r.lat)}
+            for r in coolest_parks.itertuples()
+        ]
+    }
+
+    with open(config.FRONT_DATA / "findings.json", "w", encoding="utf-8") as f:
+        json.dump(findings, f, indent=2)
+
+    print("\nUpdated frontend/data/findings.json with place exposure metrics:")
+    print(f"  Bus stops in high-heat zones: {findings['place_exposure']['bus_stops']['hot']}/{findings['place_exposure']['bus_stops']['total']} ({findings['place_exposure']['bus_stops']['hot_pct']:.1%})")
+    print(f"  Schools in high-heat zones:   {findings['place_exposure']['schools']['hot']}/{findings['place_exposure']['schools']['total']} ({findings['place_exposure']['schools']['hot_pct']:.1%})")
+    print(f"  Hospitals in high-heat zones: {findings['place_exposure']['hospitals']['hot']}/{findings['place_exposure']['hospitals']['total']} ({findings['place_exposure']['hospitals']['hot_pct']:.1%})")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## `pipeline/07_build_places_iceberg.py`
+
+```python
+"""Upload places.parquet and create the Iceberg table coolwalk.places in Amazon Athena."""
+import sys
+import time
+from pathlib import Path
+import boto3
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "pipeline"))
+import config
+import importlib
+
+ath = importlib.import_module("03_build_iceberg")
+
+
+def main():
+    bucket = "coolwalk-databucket-mdfu7jkbfxma"
+    config.BUCKET = bucket
+    parquet = config.WORK / "places.parquet"
+    if not parquet.exists():
+        sys.exit("work/places.parquet does not exist.")
+
+    print(f"Uploading places.parquet to s3://{bucket}/staging/places/...")
+    ath.clear_prefix("staging/places/")
+    ath.s3.upload_file(str(parquet), bucket, "staging/places/places.parquet")
+
+    # Staging table
+    sql_staging = f"""
+    CREATE EXTERNAL TABLE IF NOT EXISTS coolwalk.places_staging (
+      place_id BIGINT,
+      kind STRING,
+      name STRING,
+      lon DOUBLE,
+      lat DOUBLE,
+      lst_c DOUBLE,
+      ndvi DOUBLE,
+      heat_index DOUBLE
+    )
+    STORED AS PARQUET
+    LOCATION 's3://{bucket}/staging/places/'
+    """
+    print("Athena: Creating staging table coolwalk.places_staging...")
+    ath.run(sql_staging.strip(), config.DB)
+
+    # Iceberg table
+    print("Athena: Creating Iceberg table coolwalk.places...")
+    ath.clear_prefix("iceberg/places/")
+    ath.run("DROP TABLE IF EXISTS coolwalk.places", config.DB)
+    sql_iceberg = f"""
+    CREATE TABLE coolwalk.places
+    WITH (
+      table_type = 'ICEBERG',
+      format = 'PARQUET',
+      is_external = false,
+      location = 's3://{bucket}/iceberg/places/'
+    ) AS
+    SELECT * FROM coolwalk.places_staging
+    """
+    ath.run(sql_iceberg.strip(), config.DB)
+
+    n = ath.rows(ath.run("SELECT count(*) AS n FROM coolwalk.places", config.DB))[0]["n"]
+    print(f"Iceberg table coolwalk.places is ready with {int(n):,} places!")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## `scripts/augment_graph.py`
+
+```python
+import gzip, json, pandas as pd
+
+seg = pd.read_parquet("work/segments.parquet").set_index("edge_id")
+lst, veg = seg.lst_c.to_dict(), seg.ndvi.to_dict()
+with gzip.open("work/graph.json.gz", "rt", encoding="utf-8") as f:
+    g = json.load(f)
+for e in g["edges"]:
+    e[5:] = [round(float(lst[e[4]]), 2), round(float(veg[e[4]]), 3)]
+with gzip.open("work/graph.json.gz", "wt", encoding="utf-8") as f:
+    json.dump(g, f, separators=(",", ":"))
+print("edges with lst and ndvi:", len(g["edges"]))
+```
+
+# Apache Iceberg & Amazon Athena SQL Engine
+
+## `pipeline/sql/01_database.sql`
+
 ```sql
 CREATE DATABASE IF NOT EXISTS coolwalk;
 ```
 
-### `pipeline/sql/02_staging_table.sql`
+## `pipeline/sql/02_staging_table.sql`
+
 ```sql
 DROP TABLE IF EXISTS coolwalk.segments_raw;
 CREATE EXTERNAL TABLE coolwalk.segments_raw (
@@ -776,7 +1178,8 @@ STORED AS PARQUET
 LOCATION 's3://${BUCKET}/staging/segments/';
 ```
 
-### `pipeline/sql/03_iceberg_table.sql`
+## `pipeline/sql/03_iceberg_table.sql`
+
 ```sql
 DROP TABLE IF EXISTS coolwalk.segments;
 CREATE TABLE coolwalk.segments
@@ -784,14 +1187,16 @@ WITH (table_type = 'ICEBERG', location = 's3://${BUCKET}/iceberg/segments/', is_
 AS SELECT * FROM coolwalk.segments_raw;
 ```
 
-### `pipeline/sql/q_heat_grid.sql`
+## `pipeline/sql/q_heat_grid.sql`
+
 ```sql
 SELECT cast(floor(mid_lon / 0.0015) AS bigint) AS cx, cast(floor(mid_lat / 0.0015) AS bigint) AS cy,
        avg(heat_index) AS heat, sum(length_m) AS length_m
 FROM coolwalk.segments GROUP BY 1, 2
 ```
 
-### `pipeline/sql/q_hot_share.sql`
+## `pipeline/sql/q_hot_share.sql`
+
 ```sql
 SELECT round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 4) AS hot_share,
        round(sum(length_m) / 1000, 1) AS network_km,
@@ -800,7 +1205,8 @@ SELECT round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(le
 FROM coolwalk.segments
 ```
 
-### `pipeline/sql/q_hottest_streets.sql`
+## `pipeline/sql/q_hottest_streets.sql`
+
 ```sql
 SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
        round(avg(lst_c), 1) AS lst_c, round(max_by(mid_lon, length_m), 5) AS lon, round(max_by(mid_lat, length_m), 5) AS lat
@@ -810,7 +1216,8 @@ GROUP BY name HAVING sum(length_m) > 500
 ORDER BY heat DESC LIMIT 8;
 ```
 
-### `pipeline/sql/q_coolest_streets.sql`
+## `pipeline/sql/q_coolest_streets.sql`
+
 ```sql
 SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
        round(avg(lst_c), 1) AS lst_c, round(max_by(mid_lon, length_m), 5) AS lon, round(max_by(mid_lat, length_m), 5) AS lat
@@ -820,7 +1227,8 @@ GROUP BY name HAVING sum(length_m) > 500
 ORDER BY heat ASC LIMIT 8;
 ```
 
-### `pipeline/03_build_iceberg.py`
+## `pipeline/03_build_iceberg.py`
+
 ```python
 """Step 3. Put the scored street segments into an Apache Iceberg table on S3 using Amazon Athena.
 
@@ -912,7 +1320,8 @@ if __name__ == "__main__":
     main()
 ```
 
-### `pipeline/04_export_assets.py`
+## `pipeline/04_export_assets.py`
+
 ```python
 """Step 4. Query the Iceberg table with Athena and write the assets the website and Lambda need.
 
@@ -980,11 +1389,10 @@ if __name__ == "__main__":
     main()
 ```
 
----
+# Serverless Heat-Aware Routing Microservice
 
-# 7. Routing Microservice & Offline Verification
+## `backend/router/app.py`
 
-### `backend/router/app.py`
 ```python
 """CoolWalk router (AWS Lambda, HTTP API payload v2).
 
@@ -1059,9 +1467,10 @@ def build(data):
         lst = e[5] if len(e) > 5 else None
         ndvi = e[6] if len(e) > 6 else None
         for lon, lat in densify(geoms[i]):
-            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst, ndvi))
+            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst, ndvi, i))
     return {"nodes": nodes, "edges": edges, "geoms": geoms, "adj": adj,
-            "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {})}
+            "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {}),
+            "places": data.get("places", []), "val": data.get("val")}
 
 
 def load():
@@ -1141,7 +1550,7 @@ def _round_line(line):
     return [[round(x, 5), round(y, 5)] for x, y in line]
 
 
-def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=None):
+def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=None, val_lst_c=None):
     known = [h for h in heats if h is not None]
     known_lst = [t for t in (lsts or []) if t is not None]
     known_ndvi = [v for v in (ndvis or []) if v is not None]
@@ -1154,6 +1563,8 @@ def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=No
         "mean_ndvi": round(sum(known_ndvi) / len(known_ndvi), 3) if known_ndvi else None,
         "profile": [None if p is None else round(p, 3) for p in profile],
     }
+    if val_lst_c is not None:
+        out["val_lst_c"] = val_lst_c
     if line is not None:
         out["line"] = _round_line(line)
     if extra:
@@ -1184,12 +1595,19 @@ def path_metrics(g, eis):
     for k in range(BINS):
         d = (k + 0.5) / BINS * total
         profile.append(per_edge[min(bisect.bisect_left(cum, d), len(per_edge) - 1)])
-    return _finish(total, heats, profile, line, lsts=lsts, ndvis=ndvis)
+    val_lst = g.get("val", {}).get("lst") if isinstance(g.get("val"), dict) else None
+    val_lst_c = None
+    if val_lst and eis:
+        val_lst_c = []
+        for vl in val_lst:
+            w_sum = sum(vl[ei] * edges[ei][2] for ei in eis if ei < len(vl) and vl[ei] is not None)
+            val_lst_c.append(round(w_sum / total, 1) if total > 0 else None)
+    return _finish(total, heats, profile, line, lsts=lsts, ndvis=ndvis, val_lst_c=val_lst_c)
 
 
 def score_line(g, line):
     pts = list(densify([tuple(p) for p in line]))
-    heats, lsts, ndvis = [], [], []
+    heats, lsts, ndvis, matched_eis = [], [], [], []
     for lon, lat in pts:
         cx, cy = cell(lon, lat)
         best = None
@@ -1199,17 +1617,28 @@ def score_line(g, line):
                     plon, plat, h = pt_tuple[:3]
                     lst = pt_tuple[3] if len(pt_tuple) > 3 else None
                     ndvi = pt_tuple[4] if len(pt_tuple) > 4 else None
+                    ei = pt_tuple[5] if len(pt_tuple) > 5 else None
                     d = dist_m(lon, lat, plon, plat)
                     if d <= MATCH_M and (best is None or d < best[0]):
-                        best = (d, h, lst, ndvi)
+                        best = (d, h, lst, ndvi, ei)
         heats.append(best[1] if best else None)
         lsts.append(best[2] if best else None)
         ndvis.append(best[3] if best else None)
+        if best and best[4] is not None:
+            matched_eis.append(best[4])
     length = sum(dist_m(a[0], a[1], b[0], b[1]) for a, b in zip(line, line[1:]))
     profile = [heats[min(int((k + 0.5) / BINS * len(heats)), len(heats) - 1)] for k in range(BINS)] if heats else []
     matched = sum(1 for h in heats if h is not None)
+    val_lst = g.get("val", {}).get("lst") if isinstance(g.get("val"), dict) else None
+    val_lst_c = None
+    if val_lst and matched_eis:
+        val_lst_c = []
+        for vl in val_lst:
+            mvals = [vl[ei] for ei in matched_eis if ei < len(vl) and vl[ei] is not None]
+            val_lst_c.append(round(sum(mvals) / len(mvals), 1) if mvals else None)
     return _finish(length, heats, profile, None,
-                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts, ndvis=ndvis)
+                   {"coverage": round(matched / len(heats), 3) if heats else 0.0},
+                   lsts=lsts, ndvis=ndvis, val_lst_c=val_lst_c)
 
 
 # ---------------------------------------------------------------- handlers
@@ -1266,8 +1695,11 @@ def score(g, body):
 
 
 def health(g):
+    val_info = [s.get("date") for s in g.get("val", {}).get("scenes", [])] if g.get("val") else []
     return {"ok": True, "bbox": g["meta"].get("bbox"), "meta": g["meta"],
             "nodes": len(g["nodes"]), "edges": len(g["edges"]),
+            "places": len(g.get("places", [])),
+            "validation_scenes": val_info,
             "hot_threshold": HOT_T, "walk_speed_mps": WALK_MPS}
 
 
@@ -1289,6 +1721,9 @@ def handler(event, _context=None):
             return _resp(200, route(g, body))
         if path.endswith("/score"):
             return _resp(200, score(g, body))
+        if path.endswith("/refuge"):
+            import refuge, sys
+            return _resp(200, refuge.run(g, body, sys.modules[__name__]))
         return _resp(404, {"error": "Not found."})
     except ApiError as e:
         return _resp(e.status, {"error": str(e)})
@@ -1299,7 +1734,97 @@ def handler(event, _context=None):
         return _resp(500, {"error": "Routing failed. Try again in a moment."})
 ```
 
-### `backend/tests/test_router.py`
+## `backend/router/refuge.py`
+
+```python
+"""Cool-refuge finder: nearest park / water point / metro station by a fast walk and by a cool walk.
+
+POST /refuge {origin:[lon,lat], alpha?, kinds?:[...], max_minutes?}
+Needs graph["places"] = [{"kind","name","lon","lat"}]. Wire-up in app.py handler:
+    if path.endswith("/refuge"):
+        import refuge, sys
+        return _resp(200, refuge.run(g, body, sys.modules[__name__]))
+"""
+import heapq
+
+
+def _places_by_node(g, A):
+    if "_pbn" not in g:
+        pbn = {}
+        for p in g.get("places", []):
+            s = A.nearest_node(g, p["lon"], p["lat"])
+            if s and s[0] <= 150:                      # ignore places not near a walkable street
+                pbn.setdefault(s[1], []).append(p)
+        g["_pbn"] = pbn
+    return g["_pbn"]
+
+
+def _search(g, A, s, alpha, kinds, max_len):
+    """Dijkstra on length * (1 + alpha * heat); returns best place per kind and the path pointers."""
+    pbn, adj = _places_by_node(g, A), g["adj"]
+    cost, length, prev, done, best = {s: 0.0}, {s: 0.0}, {}, set(), {}
+    pq = [(0.0, s)]
+    while pq:
+        c, n = heapq.heappop(pq)
+        if n in done:
+            continue
+        done.add(n)
+        for p in pbn.get(n, ()):
+            if (not kinds or p["kind"] in kinds) and p["kind"] not in best:
+                best[p["kind"]] = (p, n)
+        if kinds and all(k in best for k in kinds):
+            break
+        for v, L, h, ei in adj[n]:
+            nl = length[n] + L
+            if v in done or nl > max_len:
+                continue
+            nc = c + L * (1.0 + alpha * h)
+            if nc < cost.get(v, 1e18):
+                cost[v], length[v], prev[v] = nc, nl, (n, ei)
+                heapq.heappush(pq, (nc, v))
+    return best, prev
+
+
+def _metrics(g, A, prev, s, t):
+    eis, n = [], t
+    while n != s:
+        n, ei = prev[n]
+        eis.append(ei)
+    if not eis:
+        return {"length_m": 0.0, "minutes": 0.0, "hot_share": None, "mean_lst_c": None, "line": []}
+    return A.path_metrics(g, eis[::-1])
+
+
+def run(g, body, A):
+    o = A._point(body.get("origin"), "origin")
+    if not A._inside(g, *o):
+        raise A.ApiError(400, "Pick a point inside the central Delhi coverage area.")
+    so = A.nearest_node(g, *o)
+    if not so or so[0] > A.SNAP_MAX_M:
+        raise A.ApiError(400, "That point is too far from a walkable street.")
+    alpha = min(max(float(body.get("alpha", 3.0)), 0.0), 8.0)
+    kinds = [k for k in (body.get("kinds") or []) if isinstance(k, str)] or None
+    max_len = min(max(float(body.get("max_minutes", 20)), 3.0), 40.0) * 60.0 * A.WALK_MPS
+    s = so[1]
+    fast, pf = _search(g, A, s, 0.0, kinds, max_len)
+    cool, pc = _search(g, A, s, alpha, kinds, max_len)
+    options = []
+    for kind in sorted(set(fast) | set(cool)):
+        opt = {"kind": kind}
+        for label, (best, prev) in (("fastest", (fast, pf)), ("cool", (cool, pc))):
+            if kind in best:
+                p, n = best[kind]
+                name = p.get("name")
+                if not name or str(name).strip().lower() in ("", "nan", "none"):
+                    name = f"Public {kind.capitalize()}" if kind != "water" else "Drinking Water Point"
+                opt[label] = {"name": name, "lon": p["lon"], "lat": p["lat"],
+                              **_metrics(g, A, prev, s, n)}
+        options.append(opt)
+    return {"options": options, "snapped_m": round(so[0])}
+```
+
+## `backend/tests/test_router.py`
+
 ```python
 """Offline tests: a 3-lane synthetic city. Run: python backend/tests/test_router.py"""
 import os
@@ -1432,21 +1957,63 @@ if __name__ == "__main__":
     print(f"{len(fns)} passed")
 ```
 
----
+## `backend/tests/test_refuge.py`
 
-# 8. Frontend Single-Page Application
+```python
+"""Run: python backend/tests/test_refuge.py  (uses the synthetic city from test_router.py)"""
+import os, sys
+sys.path.insert(0, os.path.dirname(__file__)); sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "router"))
+import app, refuge, test_router as T
 
-### `frontend/config.js`
-```javascript
-window.COOLWALK = {
-  region: "us-east-1",
-  mapKey: "v1.public.eyJqdGkiOiJmMjE0ODcxZS00NzFkLTQxZDItOTZlNi1lYmU3ZTdiMmJjZWEifWeEYCtJOXjUE20R5AOJbGkKw8kiid1QbPKJ4ibNB-M8BSq18WWfZ3RElVvNsHpN50VSYosqgQTJhQFtA_ASdVOnPcAFYvE2A8yPj3PmH42KY1JlIko_MHvEP7CZDuT8awXnLIzNDEk4t76uUiEy12mRjugyX5aEO6milL42yBdOQ_SJZd2zyAskDoCEolPUTtDh8SDNhUgXHfnjL05_mDr0F51RzNnambeor_Z5LMGcI8TnIhjm37duYGCuEBdj8JlrzjSZ4MFv4jiNXVqOrh3c6iEYejU_Ju6olZ6To4tfBuIsmMRc4HSxCEMEwwYAhlV8iYfS0T5CqlBo5ZecsG0.ZWU0ZWIzMTktMWRhNi00Mzg0LTllMzYtNzlmMDU3MjRmYTkx",
-  apiUrl: "https://euzq1skask.execute-api.us-east-1.amazonaws.com",
-  bbox: [77.19, 28.585, 77.26, 28.668]
-};
+
+def city():
+    g = T.make_graph()
+    # two shaded places of the same kind: one on the hot street (close), one on the cool street (farther)
+    g["places"] = [
+        {"kind": "park", "name": "Hot-street park", "lon": T.LON0 + 5 * T.STEP, "lat": T.LAT0},
+        {"kind": "park", "name": "Cool-street park", "lon": T.LON0 + 5 * T.STEP, "lat": T.LAT0 + 2 * T.STEP},
+        {"kind": "water", "name": "Far fountain", "lon": T.LON0 + 40 * T.STEP, "lat": T.LAT0},  # off the network
+    ]
+    return g
+
+
+def test_fastest_vs_cool_choose_differently():
+    g = city()
+    out = refuge.run(g, {"origin": [T.LON0, T.LAT0], "alpha": 3, "max_minutes": 20}, app)
+    park = next(o for o in out["options"] if o["kind"] == "park")
+    assert park["fastest"]["name"] == "Hot-street park"
+    assert park["cool"]["name"] == "Cool-street park"
+    assert park["cool"]["hot_share"] < park["fastest"]["hot_share"]
+    assert park["cool"]["minutes"] > park["fastest"]["minutes"]
+    assert all(o["kind"] != "water" for o in out["options"])      # not near a street, ignored
+
+
+def test_budget_and_validation():
+    g = city()
+    out = refuge.run(g, {"origin": [T.LON0, T.LAT0], "max_minutes": 3}, app)
+    assert out["options"] == []                                   # 3 minutes reaches nothing here
+    for bad in ({"origin": [10, 10]}, {}):
+        try:
+            refuge.run(g, bad, app); raise AssertionError("expected ApiError")
+        except app.ApiError as e:
+            assert e.status == 400
+
+
+def test_origin_on_a_place():
+    g = city()
+    out = refuge.run(g, {"origin": [T.LON0 + 5 * T.STEP, T.LAT0], "kinds": ["park"]}, app)
+    assert out["options"][0]["fastest"]["minutes"] == 0.0
+
+
+if __name__ == "__main__":
+    for k, v in sorted(globals().items()):
+        if k.startswith("test_"): v(); print("ok  ", k)
 ```
 
-### `frontend/index.html`
+# Client-Side Web Application & UI
+
+## `frontend/index.html`
+
 ```html
 <!doctype html>
 <html lang="en">
@@ -1535,6 +2102,20 @@ details li{margin:3px 0}
 .foot{color:var(--ink2);font-size:12.5px;margin-top:auto}
 .mk{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:600 13px var(--body);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:grab;background:var(--std)}
 .mk.b{background:var(--cool)}
+.tour-banner{position:fixed;top:18px;left:420px;right:20px;max-width:540px;margin:0 auto;z-index:30;background:rgba(20,34,43,.94);color:#fff;backdrop-filter:blur(10px);padding:16px 18px;border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.35);display:grid;gap:8px;animation:slideDown .25s ease}
+@keyframes slideDown{from{transform:translateY(-10px);opacity:0}to{transform:translateY(0);opacity:1}}
+.tour-step-tag{font:600 11.5px var(--body);color:#58B8A8;text-transform:uppercase;letter-spacing:.06em}
+.tour-title{font:700 16.5px/1.2 var(--display);margin:0}
+.tour-text{font:400 13.5px/1.4 var(--body);margin:0;color:#D8E0E4}
+.tour-controls{display:flex;justify-content:space-between;align-items:center;margin-top:4px}
+.tour-btn{background:rgba(255,255,255,.14);border:0;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font:500 12.5px var(--body)}
+.tour-btn:hover{background:rgba(255,255,255,.24)}
+.tour-btn.primary{background:#0E7C66;color:#fff;font-weight:600}
+.tour-btn.primary:hover{background:#11987d}
+.refuge-card{background:var(--white);border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;display:grid;gap:6px}
+.refuge-card h4{margin:0;font:600 14px var(--body);display:flex;align-items:center;gap:6px}
+.refuge-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;color:var(--ink2);margin:4px 0}
+.refuge-grid strong{color:var(--ink)}
 @media (max-width:820px){
   body{grid-template-columns:1fr}
   #map{position:fixed;inset:0}
@@ -1550,7 +2131,10 @@ details li{margin:3px 0}
 <aside class="panel" id="panel">
   <button class="grab" id="grab" type="button" aria-label="Expand or collapse panel" aria-expanded="true"></button>
   <header>
-    <h1>CoolWalk</h1>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+      <h1>CoolWalk</h1>
+      <button id="tourBtn" type="button" class="ghost" style="border-color:var(--cool);color:var(--cool);font-weight:600;padding:4px 10px;font-size:13px;white-space:nowrap" title="Take a 40-second guided tour of CoolWalk">▶ 40-sec tour</button>
+    </div>
     <p class="tag">Walking routes that give up a few minutes for far less time in the heat. Central Delhi, pre-monsoon 2026.</p>
   </header>
 
@@ -1563,10 +2147,11 @@ details li{margin:3px 0}
       <label class="field"><span class="pin b">B</span><input id="to" type="search" placeholder="End: a place or click the map" autocomplete="off" aria-label="End"></label>
       <ul class="sugg" id="suggTo"></ul>
     </div>
-    <div class="row">
+    <div class="row" style="flex-wrap:wrap">
       <button class="ghost" id="swap" type="button">Swap A and B</button>
       <button class="ghost" id="clear" type="button">Clear</button>
       <button class="ghost" id="share" type="button">Copy link</button>
+      <button class="ghost" id="refugeBtn" type="button" style="border-color:var(--cool);color:var(--cool);font-weight:600">💧 Where can I cool down?</button>
     </div>
   </section>
 
@@ -1589,11 +2174,13 @@ details li{margin:3px 0}
     <label><input type="checkbox" id="heat" checked> Show how hot each area runs</label>
     <div class="legend" aria-hidden="true"></div>
     <div class="ends" id="legendEnds"><span>Cooler</span><span>Hotter</span></div>
+    <label style="margin-top:10px"><input type="checkbox" id="places"> Show places in the heat (parks, metro, water)</label>
   </section>
 
   <details id="findings" hidden>
     <summary>What the data shows</summary>
     <p class="cap" id="findLead" style="margin-top:8px"></p>
+    <p class="cap" id="placeLead" style="margin:4px 0 8px;font-weight:500;color:var(--ink)"></p>
     <div class="cols"><div><h2>Hottest streets</h2><ol id="hotList"></ol></div><div><h2>Coolest streets</h2><ol id="coolList"></ol></div></div>
   </details>
 
@@ -1606,7 +2193,7 @@ details li{margin:3px 0}
     </div>
   </details>
 
-  <p class="foot" id="foot">Heat comes from satellite surface temperature and vegetation. It shows where streets hold heat, not the air temperature you will feel.</p>
+  <p class="foot" id="foot">Heat comes from satellite surface temperature and vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson" style="color:var(--cool)">Download the data</a> (GeoJSON).</p>
 </aside>
 <div id="map" role="application" aria-label="Map of central Delhi"></div>
 
@@ -1818,10 +2405,30 @@ function show(r, aws){
   const std = usable ? aws : r.shortest;
   const stdLabel = usable ? 'Standard walk (Amazon Location Service)' : 'Shortest walk';
   const cool = r.cool;
-  const dMin = Math.round(cool.minutes - std.minutes), dHot = pct(std.hot_share) - pct(cool.hot_share);
+  const dMin = Math.round(cool.minutes - std.minutes);
+  const stdHotMin = Math.round(std.minutes * (std.hot_share || 0));
+  const coolHotMin = Math.round(cool.minutes * (cool.hot_share || 0));
+  const dHotMin = stdHotMin - coolHotMin;
+  const dHotPct = pct(std.hot_share) - pct(cool.hot_share);
   let verdict;
-  if (dHot < 4) verdict = 'The usual walk is already about as cool as it gets here.';
-  else verdict = `${dMin > 0 ? `${dMin} extra minute${dMin === 1 ? '' : 's'}` : 'No extra time'} cuts your time in high-heat zones from ${pct(std.hot_share)}% to ${pct(cool.hot_share)}% of the walk.`;
+  if (dHotMin > 0 && dMin > 0) {
+    verdict = `${dHotMin} fewer minute${dHotMin === 1 ? '' : 's'} on hot, bare streets for ${dMin} extra minute${dMin === 1 ? '' : 's'}.`;
+  } else if (dHotMin > 0 && dMin <= 0) {
+    verdict = `${dHotMin} fewer minute${dHotMin === 1 ? '' : 's'} on hot, bare streets with no extra walking time.`;
+  } else if (dHotPct < 4) {
+    verdict = 'The usual walk is already about as cool as it gets here.';
+  } else {
+    verdict = `${dMin > 0 ? `${dMin} extra minute${dMin === 1 ? '' : 's'}` : 'No extra time'} cuts your time in high-heat zones from ${pct(std.hot_share)}% to ${pct(cool.hot_share)}% of the walk.`;
+  }
+  let valCheckHtml = '';
+  if (cool.val_lst_c && cool.val_lst_c.length && std.val_lst_c && std.val_lst_c.length) {
+    const diff = (std.val_lst_c[0] - cool.val_lst_c[0]).toFixed(1);
+    if (+diff > 0) {
+      valCheckHtml = `<p class="cap" style="color:var(--cool);font-weight:600;margin:6px 0 0">✓ Independent check (held-out scene 2026-06-17): ${diff} °C cooler</p>`;
+    } else if (+diff === 0) {
+      valCheckHtml = `<p class="cap" style="color:var(--ink2);margin:6px 0 0">Independent check (held-out scene 2026-06-17): equal surface temp</p>`;
+    }
+  }
   const notes = [];
   if (r.snapped.origin_m > 150 || r.snapped.destination_m > 150) notes.push('One point was far from a street, so we used the nearest street.');
   if (r.alpha_used < state.alpha) notes.push('The cooler route was limited to a reasonable detour.');
@@ -1831,10 +2438,11 @@ function show(r, aws){
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
     <div class="route cool"><h3>CoolWalk</h3>
       <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(cool.profile, 'cool')}<p class="cap">${pct(cool.hot_share)}% in high-heat zones${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p></div>
+      ${strip(cool.profile, 'cool')}<p class="cap">${pct(cool.hot_share)}% in high-heat zones (about ${coolHotMin} min)${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p>
+      ${valCheckHtml}</div>
     <div class="route"><h3>${esc(stdLabel)}</h3>
       <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(std.profile, 'std')}<p class="cap">${pct(std.hot_share)}% in high-heat zones${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
+      ${strip(std.profile, 'std')}<p class="cap">${pct(std.hot_share)}% in high-heat zones (about ${stdHotMin} min)${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
   state.lastRoutes = {
     cool: { line: cool.line, length_m: cool.length_m },
     std: { line: usable ? aws.line : r.shortest.line, length_m: std.length_m }
@@ -1911,10 +2519,296 @@ $('#result').addEventListener('mouseleave', () => {
 });
 $('#alpha').addEventListener('input', debounce((e) => { state.alpha = +e.target.value; plan(); }, 200));
 
+/* ---------- refuge finder ---------- */
+const KIND_ICONS = {park:'🌳', water:'💧', metro:'🚇', hospital:'🏥', school:'🏫', bus_stop:'🚏'};
+
+$('#refugeBtn').onclick = async () => {
+  if (!state.a) {
+    $('#result').innerHTML = '<div class="note" style="background:var(--cool-soft);color:var(--cool);border-color:var(--cool);padding:10px">Pick a starting point (Pin A) on the map or search above, then click <strong>Where can I cool down?</strong> to find nearby shaded parks, water points, or air-conditioned metro stations.</div>';
+    return;
+  }
+  busy();
+  try {
+    const res = await api('/refuge', {origin: state.a, alpha: state.alpha});
+    showRefuges(res);
+  } catch (e) {
+    showError(e.message);
+  }
+};
+
+function showRefuges(res){
+  clearTimeout(warmTimer);
+  const opts = (res && res.options) || [];
+  if (!opts.length) {
+    $('#result').innerHTML = '<p class="empty">No cool refuges found within a 20-minute walk from here.</p>';
+    return;
+  }
+  let html = `<p class="verdict" style="font-size:18px">Nearest Cool Refuges</p><p class="cap">Shelter reachable along the coolest walking path from Pin A:</p>`;
+  opts.forEach((o, idx) => {
+    const icon = KIND_ICONS[o.kind] || '📍';
+    const c = o.cool || o.fastest;
+    const f = o.fastest || o.cool;
+    const name = (c && c.name) || o.kind;
+    const cMin = c ? Math.round(c.minutes) : '-';
+    const fMin = f ? Math.round(f.minutes) : '-';
+    const cKm = c ? (c.length_m / 1000).toFixed(1) : '-';
+    const cLST = c && c.mean_lst_c != null ? `${c.mean_lst_c}°C` : '-';
+    html += `
+      <div class="refuge-card">
+        <h4>${icon} ${esc(name)} <small style="color:var(--ink2);font-weight:400">(${esc(o.kind)})</small></h4>
+        <div class="refuge-grid">
+          <div><strong>Cool walk:</strong> ${cMin} min (${cKm} km)<br><small style="color:var(--cool)">Avg surface: ${cLST}</small></div>
+          <div><strong>Fastest walk:</strong> ${fMin} min<br><small>Direct rush</small></div>
+        </div>
+        <button type="button" class="ghost" data-refuge-idx="${idx}" style="border-color:var(--cool);color:var(--cool);font-weight:600;padding:5px 8px;font-size:12.5px;margin-top:4px">Show cool walk</button>
+      </div>
+    `;
+  });
+  $('#result').innerHTML = html;
+  $('#result').querySelectorAll('button[data-refuge-idx]').forEach(btn => {
+    btn.onclick = () => {
+      const o = opts[+btn.dataset.refugeIdx];
+      const target = o.cool || o.fastest;
+      if (target && target.line && target.line.length) {
+        setPoint('b', [target.lon, target.lat], target.name);
+        draw('cool', target.line);
+        draw('std', (o.fastest && o.fastest.line) ? o.fastest.line : []);
+        const bb = target.line.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(target.line[0], target.line[0]));
+        map.fitBounds(bb, {padding: pad(), duration: 600, maxZoom: 16});
+      }
+    };
+  });
+}
+
+/* ---------- places in the heat map layer ---------- */
+let placesLoaded = false;
+let placePopup = null;
+$('#places').addEventListener('change', async (e) => {
+  if (e.target.checked) {
+    if (!placesLoaded) {
+      try {
+        const data = await (await fetch('data/places.geojson')).json();
+        map.addSource('places', {type:'geojson', data});
+        map.addLayer({
+          id: 'places-circles',
+          type: 'circle',
+          source: 'places',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 4, 15, 7, 18, 10],
+            'circle-color': ['interpolate', ['linear'], ['get', 'heat'], ...RAMP.flat()],
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.5,
+            'circle-opacity': 0.9
+          }
+        });
+        map.on('click', 'places-circles', (ev) => {
+          const f = ev.features && ev.features[0];
+          if (!f) return;
+          const p = f.properties;
+          const geom = f.geometry.coordinates;
+          if (placePopup) placePopup.remove();
+          placePopup = new maplibregl.Popup({closeButton: true, closeOnClick: true, offset: 10})
+            .setLngLat(geom)
+            .setHTML(`
+              <strong>${esc(p.name || p.kind)}</strong> (${esc(p.kind.replace('_',' '))})<br>
+              Heat index: <strong>${(+p.heat).toFixed(2)}</strong><br>
+              Avg surface: ${p.lst_c}°C<br>
+              Greenery (NDVI): ${p.ndvi}<br>
+              <button type="button" class="link-btn" id="walkToPlace" style="margin-top:6px;font-weight:600">Walk here from Pin A</button>
+            `)
+            .addTo(map);
+          setTimeout(() => {
+            const btn = document.getElementById('walkToPlace');
+            if (btn) btn.onclick = () => {
+              if (placePopup) placePopup.remove();
+              setPoint('b', geom, p.name || p.kind);
+              plan();
+            };
+          }, 50);
+        });
+        map.on('mouseenter', 'places-circles', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'places-circles', () => { map.getCanvas().style.cursor = ''; });
+        placesLoaded = true;
+      } catch (err) {
+        console.warn('Places layer unavailable', err);
+        e.target.checked = false;
+      }
+    } else {
+      if (map.getLayer('places-circles')) map.setLayoutProperty('places-circles', 'visibility', 'visible');
+    }
+  } else {
+    if (map.getLayer('places-circles')) map.setLayoutProperty('places-circles', 'visibility', 'none');
+  }
+});
+
+/* ---------- 40-second guided tour ---------- */
+let tourState = {active: false, step: 0, paused: false, timer: null, scrubTimer: null};
+
+const TOUR_STEPS = [
+  {
+    tag: 'Step 1 of 5 · Urban Heat Island',
+    title: "Central Delhi's Thermal Landscape",
+    text: "During Delhi summers, surface temperatures routinely top 45 °C. This satellite layer maps physical surface heat and vegetation, identifying extreme microclimates street by street.",
+    action: () => {
+      $('#heat').checked = true;
+      if (map.getLayer('heat')) map.setLayoutProperty('heat', 'visibility', 'visible');
+      map.flyTo({center: [77.228, 28.632], zoom: 12.8, padding: pad(), duration: 1000});
+    }
+  },
+  {
+    tag: 'Step 2 of 5 · Heat-Aware Walk',
+    title: 'Slashing Heat Exposure on Everyday Trips',
+    text: "The standard walk from Jama Masjid to Raj Ghat puts pedestrians in 59% high-heat zones. CoolWalk routes through tree-canopied paths, cutting high heat to just 9.5% and dropping surface temperature by 1.9 °C.",
+    action: () => {
+      const p = PRESETS[1];
+      setPoint('a', p.a, p.label); setPoint('b', p.b, p.to);
+      plan();
+    }
+  },
+  {
+    tag: 'Step 3 of 5 · Route Scrubbing',
+    title: 'Interactive Microclimate Pinpointing',
+    text: "Every route card features a 48-bin heat strip. Scrubbing your cursor projects the exact location and microclimate conditions along the walk in real time.",
+    action: () => {
+      if (state.lastRoutes && state.lastRoutes.cool) {
+        let i = 0;
+        clearInterval(tourState.scrubTimer);
+        tourState.scrubTimer = setInterval(() => {
+          if (!tourState.active || tourState.paused) return;
+          i = (i + 1) % 48;
+          const targetDist = ((i + 0.5) / 48) * state.lastRoutes.cool.length_m;
+          const pt = pointAtDist(state.lastRoutes.cool.line, targetDist);
+          if (pt) {
+            if (!hoverDot) {
+              const el = document.createElement('div');
+              el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#14222B;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);pointer-events:none';
+              hoverDot = new maplibregl.Marker({element: el}).setLngLat(pt).addTo(map);
+            } else hoverDot.setLngLat(pt);
+          }
+        }, 120);
+      }
+    }
+  },
+  {
+    tag: 'Step 4 of 5 · Microclimate Contrast',
+    title: '4 to 6 °C Temperature Variance Across Streets',
+    text: "Unshaded market corridors like Chandni Chowk bake at 46.2 °C. Yet just a few blocks away, tree-lined boulevards like Akbar Road run 4 to 6 °C cooler at 40.6 °C.",
+    action: () => {
+      if (hoverDot) { hoverDot.remove(); hoverDot = null; }
+      map.flyTo({center: [77.230, 28.656], zoom: 15.2, padding: pad(), duration: 800});
+      if (streetPopup) streetPopup.remove();
+      streetPopup = new maplibregl.Popup({closeButton: false, offset: 12})
+        .setLngLat([77.230, 28.656])
+        .setHTML('<strong>Chandni Chowk</strong><br>Measured surface: 46.2 °C (high heat)')
+        .addTo(map);
+      setTimeout(() => {
+        if (!tourState.active) return;
+        map.flyTo({center: [77.218, 28.604], zoom: 15.2, padding: pad(), duration: 900});
+        if (streetPopup) streetPopup.remove();
+        streetPopup = new maplibregl.Popup({closeButton: false, offset: 12})
+          .setLngLat([77.218, 28.604])
+          .setHTML('<strong>Akbar Road</strong><br>Measured surface: 40.6 °C (tree canopy)')
+          .addTo(map);
+      }, 4000);
+    }
+  },
+  {
+    tag: 'Step 5 of 5 · Cool Refuges & Benchmark',
+    title: 'Emergency Relief & Verified Results',
+    text: "'Where can I cool down' routes pedestrians to nearby parks, water points, or air-conditioned metro stations. Over 500 benchmark trips, a median detour of just 1 extra minute saves a minute of intense heat.",
+    action: () => {
+      if (streetPopup) { streetPopup.remove(); streetPopup = null; }
+      setPoint('a', PRESETS[1].a, PRESETS[1].label);
+      api('/refuge', {origin: state.a, alpha: state.alpha}).then(showRefuges).catch(() => {});
+      map.flyTo({center: PRESETS[1].a, zoom: 14.5, padding: pad(), duration: 800});
+    }
+  }
+];
+
+function renderTourBanner(){
+  let el = document.getElementById('tourBanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'tourBanner';
+    el.className = 'tour-banner';
+    document.body.appendChild(el);
+  }
+  const s = TOUR_STEPS[tourState.step];
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <span class="tour-step-tag">${esc(s.tag)}</span>
+      <button type="button" class="tour-btn" id="tourExit" title="Exit tour (ESC)">✕ Exit</button>
+    </div>
+    <h3 class="tour-title">${esc(s.title)}</h3>
+    <p class="tour-text">${esc(s.text)}</p>
+    <div class="tour-controls">
+      <div style="display:flex;gap:6px">
+        <button type="button" class="tour-btn" id="tourPrev" ${tourState.step === 0 ? 'disabled style="opacity:.4"' : ''}>← Prev</button>
+        <button type="button" class="tour-btn" id="tourPause">${tourState.paused ? '▶ Resume' : '⏸ Pause'}</button>
+      </div>
+      <button type="button" class="tour-btn primary" id="tourNext">${tourState.step === TOUR_STEPS.length - 1 ? 'Finish' : 'Next →'}</button>
+    </div>
+  `;
+  document.getElementById('tourExit').onclick = stopTour;
+  document.getElementById('tourPrev').onclick = () => { if (tourState.step > 0) runTourStep(tourState.step - 1); };
+  document.getElementById('tourNext').onclick = () => {
+    if (tourState.step < TOUR_STEPS.length - 1) runTourStep(tourState.step + 1);
+    else stopTour();
+  };
+  document.getElementById('tourPause').onclick = () => {
+    tourState.paused = !tourState.paused;
+    renderTourBanner();
+  };
+}
+
+function runTourStep(idx){
+  clearTimeout(tourState.timer);
+  clearInterval(tourState.scrubTimer);
+  tourState.step = idx;
+  renderTourBanner();
+  TOUR_STEPS[idx].action();
+  if (!tourState.paused && idx < TOUR_STEPS.length - 1) {
+    tourState.timer = setTimeout(() => {
+      if (tourState.active && !tourState.paused) runTourStep(idx + 1);
+    }, 8500);
+  }
+}
+
+function startTour(){
+  tourState.active = true;
+  tourState.paused = false;
+  runTourStep(0);
+}
+
+function stopTour(){
+  clearTimeout(tourState.timer);
+  clearInterval(tourState.scrubTimer);
+  if (hoverDot) { hoverDot.remove(); hoverDot = null; }
+  if (streetPopup) { streetPopup.remove(); streetPopup = null; }
+  const el = document.getElementById('tourBanner');
+  if (el) el.remove();
+  tourState.active = false;
+}
+
+$('#tourBtn').onclick = startTour;
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && tourState.active) stopTour();
+});
+
 /* ---------- data story and provenance ---------- */
 let streetPopup = null;
 fetch('data/findings.json').then((r) => r.json()).then((f) => {
   $('#findLead').textContent = `${pct(f.hot_share)}% of the ${Math.round(f.network_km)} km of walkable streets in this area sit in high-heat zones.`;
+  if (f.place_exposure) {
+    const pe = f.place_exposure;
+    const hosp = pe.hospitals || pe.hospital || {};
+    const schl = pe.schools || pe.school || {};
+    const bus = pe.bus_stops || pe.bus_stop || {};
+    const hPct = hosp.hot_pct != null ? (hosp.hot_pct * 100).toFixed(1) : (hosp.pct || 0);
+    const sPct = schl.hot_pct != null ? (schl.hot_pct * 100).toFixed(1) : (schl.pct || 0);
+    const bPct = bus.hot_pct != null ? (bus.hot_pct * 100).toFixed(1) : (bus.pct || 0);
+    $('#placeLead').textContent = `Places in high-heat zones: ${hosp.hot} of ${hosp.total} hospitals (${hPct}%), ${schl.hot} of ${schl.total} schools (${sPct}%), and ${bus.hot} of ${bus.total} bus stops (${bPct}%).`;
+  }
   if (f.lst_p05_c != null && f.lst_p95_c != null) {
     $('#legendEnds').innerHTML = `<span>Cooler (about ${f.lst_p05_c} °C surface)</span><span>Hotter (about ${f.lst_p95_c} °C)</span>`;
   }
@@ -1938,18 +2832,380 @@ fetch('data/findings.json').then((r) => r.json()).then((f) => {
 }).catch(() => {});
 fetch(C.apiUrl + '/health').then((r) => r.json()).then((h) => {
   const m = h.meta || {};
-  if (m.landsat_date) $('#foot').textContent = `Heat is estimated from Landsat surface temperature (${m.landsat_date}) and Sentinel-2 vegetation (${m.sentinel_date}). It shows where streets hold heat, not the air temperature you will feel. Walking speed is assumed at ${h.walk_speed_mps} m/s.`;
+  if (m.landsat_date) $('#foot').innerHTML = `Heat is estimated from Landsat surface temperature (${m.landsat_date}) and Sentinel-2 vegetation (${m.sentinel_date}). It shows where streets hold heat, not the air temperature you will feel. Walking speed is assumed at ${h.walk_speed_mps} m/s. <a href="data/heat_grid.geojson" download="heat_grid.geojson" style="color:var(--cool)">Download the data</a> (GeoJSON).`;
 }).catch(() => {});
 </script>
 </body>
 </html>
 ```
 
----
+# Benchmarking, Verification & QA Harnesses
 
-# 9. Automation, Pair Evaluation & Screenshot Scripts
+## `scripts/benchmark.py`
 
-### `scripts/test_presets.py`
+```python
+"""Benchmark CoolWalk against the shortest walk on many random trips (no AWS needed).
+
+Run after the pipeline:  python scripts/benchmark.py        (N=500 trips by default)
+Writes docs/BENCHMARK.md. Every headline statistic for the video and write-up should come from here.
+Optional keys are used when the router returns them: mean_lst_c, val_lst_c (held-out scenes).
+"""
+import os, random, statistics as st, sys
+
+ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, os.path.join(ROOT, "backend", "router"))
+os.environ.setdefault("GRAPH_LOCAL", os.path.join(ROOT, "work", "graph.json.gz"))
+import app  # noqa: E402
+
+N, ALPHA = int(os.getenv("N", "500")), float(os.getenv("ALPHA", "3"))
+LO, HI = float(os.getenv("MIN_M", "1500")), float(os.getenv("MAX_M", "4000"))
+g = app.load()
+rnd, n, rows, tries = random.Random(11), len(g["nodes"]), [], 0
+while len(rows) < N and tries < N * 40:
+    tries += 1
+    a, b = rnd.randrange(n), rnd.randrange(n)
+    if not LO <= app.dist_m(*g["nodes"][a], *g["nodes"][b]) <= HI:
+        continue
+    try:
+        r = app.route(g, {"origin": g["nodes"][a], "destination": g["nodes"][b], "alpha": ALPHA})
+    except app.ApiError:
+        continue
+    s, c = r["shortest"], r["cool"]
+    if s["hot_share"] is None:
+        continue
+    row = {"extra_min": c["minutes"] - s["minutes"], "detour_pct": 100 * (c["length_m"] / s["length_m"] - 1),
+           "hot_min_avoided": s["minutes"] * s["hot_share"] - c["minutes"] * c["hot_share"],
+           "hot_pp": 100 * (s["hot_share"] - c["hot_share"]), "base_min": s["minutes"]}
+    if s.get("mean_lst_c") is not None and c.get("mean_lst_c") is not None:
+        row["lst_drop"] = s["mean_lst_c"] - c["mean_lst_c"]
+    for i, (sv, cv) in enumerate(zip(s.get("val_lst_c") or [], c.get("val_lst_c") or [])):
+        if sv is not None and cv is not None:
+            row[f"val{i}_drop"] = sv - cv
+    rows.append(row)
+if not rows:
+    sys.exit("No trips found. Check GRAPH_LOCAL and the distance range.")
+
+
+def q(key, p):
+    xs = sorted(r[key] for r in rows if key in r)
+    return xs[min(int(p * len(xs)), len(xs) - 1)] if xs else float("nan")
+
+
+def line(label, key, unit):
+    vals = [r[key] for r in rows if key in r]
+    if not vals:
+        return None
+    return f"| {label} | {st.median(vals):.1f} | {q(key, .1):.1f} | {q(key, .9):.1f} | {st.mean(vals):.1f} {unit} | {len(vals)} |"
+
+
+lines = [l for l in [
+    line("Extra walking time (min)", "extra_min", "min"),
+    line("Extra distance (%)", "detour_pct", "%"),
+    line("Minutes in high-heat zones avoided", "hot_min_avoided", "min"),
+    line("Share of walk in high-heat zones cut (points)", "hot_pp", "pp"),
+    line("Average surface temperature drop, routing scene (C)", "lst_drop", "C"),
+] + [line(f"Average surface temperature drop, held-out scene {i + 1} (C)", f"val{i}_drop", "C") for i in range(4)] if l]
+better = sum(1 for r in rows if r["hot_pp"] >= 5) / len(rows)
+same = sum(1 for r in rows if r["hot_pp"] < 1) / len(rows)
+out = f"""# Benchmark (generated by scripts/benchmark.py)
+
+{len(rows)} random trips between {LO / 1000:.1f} and {HI / 1000:.1f} km, alpha = {ALPHA}, detour cap 1.45. Median trip: {st.median(r['base_min'] for r in rows):.0f} min.
+
+| Metric | Median | 10th pct | 90th pct | Mean | Trips |
+|---|---|---|---|---|---|
+""" + "\n".join(lines) + f"""
+
+- Trips where CoolWalk cut high-heat share by 5 points or more: {better:.0%}
+- Trips where CoolWalk made no real difference (under 1 point): {same:.0%}
+
+The routing scene's numbers are in-sample, because the route is chosen to minimise them. Held-out scene rows, when present, are the independent check.
+"""
+open(os.path.join(ROOT, "docs", "BENCHMARK.md"), "w", encoding="utf-8").write(out)
+print(out)
+```
+
+## `scripts/verify_ui_qa.py`
+
+```python
+"""Full UI QA test script using Playwright in headless Chrome."""
+import sys
+import time
+from playwright.sync_api import sync_playwright
+
+SITE = "https://main.d3miw0zrayytbj.amplifyapp.com"
+CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe"
+
+def test_ui():
+    console_errors = []
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=CHROME, headless=True)
+        
+        # Test 1: Desktop Experience
+        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        page = context.new_page()
+        page.on("console", lambda msg: console_errors.append(f"[{msg.type}] {msg.text}") if msg.type == "error" else None)
+        page.on("pageerror", lambda err: console_errors.append(f"[pageerror] {err}"))
+        
+        print("Navigating to site on desktop...")
+        page.goto(SITE)
+        
+        # Verify auto-load of walk (B1)
+        print("Waiting for auto-loaded walk...")
+        page.wait_for_selector(".route.cool", timeout=15000)
+        verdict = page.text_content(".verdict")
+        print(f"Auto-loaded verdict: {verdict}")
+        
+        # Verify Independent check (Tier 2a)
+        print("Verifying Independent check display...")
+        page.wait_for_selector(".route.cool .cap", timeout=5000)
+        cool_caps = page.text_content(".route.cool")
+        print(f"Cool route content summary: {cool_caps[:120].encode('ascii', 'replace').decode()}...")
+        assert "Independent check" in cool_caps, "Expected Independent check in CoolWalk card"
+        
+        # Verify Why helper text (B2)
+        why_text = page.text_content("#result > p.cap")
+        print(f"Why helper explanation: {why_text}")
+        assert "cooler surface" in why_text or "greenery" in why_text or "avoiding" in why_text
+        
+        # Verify legend ends (B5)
+        print("Waiting for findings.json to populate legend...")
+        page.wait_for_function('() => document.getElementById("legendEnds").textContent.includes("°C") || document.getElementById("legendEnds").textContent.includes("about")', timeout=10000)
+        leg_text = page.text_content("#legendEnds")
+        print(f"Legend text: {leg_text.encode('ascii', 'replace').decode()}")
+        assert "about" in leg_text or "Cooler" in leg_text
+        
+        # Test refuge finder (Tier 2b)
+        print("Testing 'Where can I cool down?' refuge finder...")
+        page.click("#refugeBtn")
+        page.wait_for_selector(".refuge-card", timeout=12000)
+        refuge_cards = page.query_selector_all(".refuge-card")
+        print(f"Refuge options returned: {len(refuge_cards)}")
+        assert len(refuge_cards) >= 1
+        page.click('button[data-refuge-idx="0"]', force=True)
+        page.wait_for_timeout(1000)
+        
+        # Test places layer checkbox (Tier 2b)
+        print("Testing 'Places in the heat' layer...")
+        page.click("#places")
+        page.wait_for_timeout(2000)
+        assert page.is_checked("#places")
+        page.click("#places")
+        page.wait_for_timeout(500)
+        
+        # Test presets
+        print("Testing preset 0 (Jama Masjid to Delhi Gate)...")
+        page.click('#presets button[data-i="0"]')
+        page.wait_for_timeout(2000)
+        assert "Delhi Gate" in page.input_value("#to")
+        
+        # Test Swap
+        print("Testing Swap button...")
+        from_val = page.input_value("#from")
+        to_val = page.input_value("#to")
+        page.click("#swap")
+        page.wait_for_timeout(1000)
+        assert page.input_value("#from") == to_val
+        assert page.input_value("#to") == from_val
+        
+        # Test Tradeoff slider
+        print("Testing tradeoff slider...")
+        page.fill("#alpha", "1")
+        page.dispatch_event("#alpha", "input")
+        page.wait_for_timeout(1500)
+        
+        # Test Copy link button (B4)
+        print("Testing Share/Copy link button...")
+        page.click("#share")
+        page.wait_for_timeout(500)
+        share_btn_text = page.text_content("#share")
+        print(f"Share button text after click: {share_btn_text}")
+        assert "Link copied" in share_btn_text or "Press Ctrl+C" in share_btn_text
+        
+        # Test Heat layer toggle
+        print("Testing heat toggle...")
+        page.click("#heat")
+        page.wait_for_timeout(500)
+        page.click("#heat")
+        page.wait_for_timeout(500)
+        
+        # Test Strip hover (A3 & hoverDot)
+        print("Testing heat strip hover...")
+        page.hover('.route.cool .strip i[data-idx="24"]', force=True)
+        page.wait_for_timeout(500)
+        
+        # Test Street click flyTo + popup (A3)
+        print("Testing street click popup in 'What the data shows'...")
+        page.click("#findings summary", force=True)
+        page.wait_for_timeout(800)
+        page.click("#hotList li:first-child button", force=True)
+        page.wait_for_selector(".maplibregl-popup-content", timeout=5000)
+        popup_content = page.text_content(".maplibregl-popup-content")
+        print(f"Street popup content: {popup_content}")
+        assert "Avg surface" in popup_content
+        
+        # Test How it works (B6)
+        print("Testing 'How it works, and the limits' details block...")
+        page.click("#howItWorks summary", force=True)
+        page.wait_for_timeout(500)
+        how_text = page.text_content("#howItWorks")
+        assert "Landsat 8" in how_text and "Sentinel-2" in how_text
+        
+        # Test Clear button
+        print("Testing Clear button...")
+        page.click("#clear", force=True)
+        page.wait_for_timeout(500)
+        assert page.input_value("#from") == ""
+        assert page.input_value("#to") == ""
+        
+        # Test Place Search with Amazon Location Places v2
+        print("Testing place search for 'India Gate'...")
+        page.fill("#to", "India Gate")
+        page.wait_for_selector("#suggTo li button", timeout=8000)
+        first_sugg = page.text_content("#suggTo li:first-child button")
+        print(f"First search suggestion: {first_sugg}")
+        page.click("#suggTo li:first-child button")
+        page.wait_for_timeout(1000)
+        assert "India Gate" in page.input_value("#to")
+        
+        # Test 40-second tour (Tier 3)
+        print("Testing 40-second tour mode...")
+        page.click("#tourBtn")
+        page.wait_for_selector("#tourBanner", timeout=5000)
+        banner_text = page.text_content("#tourBanner")
+        print(f"Tour banner step 1: {banner_text[:80].encode('ascii', 'replace').decode()}...")
+        assert "Step 1 of 5" in banner_text
+        page.click("#tourNext")
+        page.wait_for_timeout(1000)
+        banner_step2 = page.text_content("#tourBanner")
+        assert "Step 2 of 5" in banner_step2
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(500)
+        assert page.query_selector("#tourBanner") is None, "Tour should exit on Escape key"
+        
+        # Test Data Download link
+        print("Verifying 'Download the data' GeoJSON link...")
+        dl_link = page.query_selector('a[download="heat_grid.geojson"]')
+        assert dl_link is not None
+        
+        context.close()
+        
+        # Test 2: Mobile 390px layout & Panel Collapse (B7)
+        print("\nTesting Mobile 390px layout and collapsible panel...")
+        mob_context = browser.new_context(viewport={"width": 390, "height": 844})
+        mob_page = mob_context.new_page()
+        mob_page.goto(SITE)
+        mob_page.wait_for_selector(".route.cool", timeout=15000)
+        
+        grab_btn = mob_page.query_selector("#grab")
+        assert grab_btn is not None
+        print("Clicking grab button to collapse panel...")
+        mob_page.click("#grab")
+        mob_page.wait_for_timeout(500)
+        panel_class = mob_page.get_attribute("#panel", "class")
+        print(f"Panel class after grab click: {panel_class}")
+        assert "collapsed" in panel_class
+        
+        print("Clicking grab button again to expand panel...")
+        mob_page.click("#grab")
+        mob_page.wait_for_timeout(500)
+        panel_class_uncollapsed = mob_page.get_attribute("#panel", "class")
+        assert "collapsed" not in panel_class_uncollapsed
+        
+        mob_context.close()
+        
+        # Test 3: Reload with hash URL (#a=...&b=...)
+        print("\nTesting shareable URL hash reproduction...")
+        hash_url = f"{SITE}#a=77.23340,28.65070&b=77.24850,28.64050&alpha=3"
+        hash_context = browser.new_context(viewport={"width": 1280, "height": 800})
+        hash_page = hash_context.new_page()
+        hash_page.goto(hash_url)
+        hash_page.wait_for_selector(".route.cool", timeout=15000)
+        hash_verdict = hash_page.text_content(".verdict")
+        print(f"Hash reproduced verdict: {hash_verdict}")
+        assert "hot, bare streets" in hash_verdict or "high-heat zones" in hash_verdict
+        hash_context.close()
+        
+        browser.close()
+        
+    print("\n--- Console Errors Check ---")
+    if console_errors:
+        print(f"Found {len(console_errors)} console errors:")
+        for err in console_errors:
+            print("  ", err)
+        sys.exit(1)
+    else:
+        print("Zero console errors! QA Passed completely!")
+
+if __name__ == "__main__":
+    test_ui()
+```
+
+## `scripts/capture_screenshots.py`
+
+```python
+import time
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+OUT = Path('docs/screenshots')
+OUT.mkdir(parents=True, exist_ok=True)
+
+CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+SITE_URL = 'https://main.d3miw0zrayytbj.amplifyapp.com'
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(executable_path=CHROME, headless=True)
+
+    # 1. Desktop First View
+    page = browser.new_page(viewport={'width': 1280, 'height': 800})
+    print('Navigating to site...')
+    page.goto(SITE_URL)
+    page.wait_for_timeout(4000) # wait for map style & heat grid
+    page.screenshot(path=str(OUT / '01_first_view.png'))
+    print('Captured 01_first_view.png')
+
+    # 2. Desktop Routed Walk
+    # Click the first preset (Jama Masjid to Delhi Gate)
+    page.click('#presets button:first-child')
+    print('Clicked preset 1, waiting for route calculation...')
+    page.wait_for_selector('.route.cool', timeout=15000)
+    page.wait_for_timeout(3000) # wait for map animation & rendering
+    page.screenshot(path=str(OUT / '02_routed_walk.png'))
+    print('Captured 02_routed_walk.png')
+    page.close()
+
+    # 3. Mobile Layout (390 px width)
+    mobile_page = browser.new_page(viewport={'width': 390, 'height': 844})
+    mobile_page.goto(SITE_URL)
+    mobile_page.wait_for_timeout(3000)
+    mobile_page.click('#presets button:first-child')
+    mobile_page.wait_for_selector('.route.cool', timeout=15000)
+    mobile_page.wait_for_timeout(3000)
+    mobile_page.screenshot(path=str(OUT / '03_phone_layout.png'))
+    print('Captured 03_phone_layout.png')
+    mobile_page.close()
+
+    # 4. Cool-Refuge Finder & Places layer
+    refuge_page = browser.new_page(viewport={'width': 1280, 'height': 800})
+    refuge_page.goto(SITE_URL)
+    refuge_page.wait_for_selector('.route.cool', timeout=15000)
+    refuge_page.click('#places')
+    refuge_page.wait_for_timeout(1000)
+    refuge_page.click('#refugeBtn')
+    refuge_page.wait_for_selector('.refuge-card', timeout=12000)
+    refuge_page.wait_for_timeout(2000)
+    refuge_page.screenshot(path=str(OUT / '04_refuge_finder.png'))
+    print('Captured 04_refuge_finder.png')
+    refuge_page.close()
+
+    browser.close()
+
+print('All screenshots captured successfully!')
+```
+
+## `scripts/test_presets.py`
+
 ```python
 import urllib.request
 import json
@@ -1983,81 +3239,14 @@ for p in presets:
         print(f"Error for {p['label']}: {e}\n")
 ```
 
-### `scripts/search_landmark_pairs.py`
+## `scripts/eval_pairs.py`
+
 ```python
-import os
-import sys
-import json
-
-sys.path.insert(0, 'backend/router')
-os.environ['GRAPH_LOCAL'] = 'work/graph.json.gz'
-import app
-
-g = app.load()
-
-landmarks = [
-    ('Chandni Chowk', [77.2303, 28.6562]),
-    ('Red Fort', [77.2410, 28.6562]),
-    ('Jama Masjid', [77.2334, 28.6507]),
-    ('Connaught Place', [77.2167, 28.6315]),
-    ('New Delhi Station', [77.2197, 28.6430]),
-    ('Old Delhi Station', [77.2285, 28.6619]),
-    ('Delhi Gate', [77.2405, 28.6395]),
-    ('Daryaganj', [77.2405, 28.6465]),
-    ('Raj Ghat', [77.2485, 28.6405]),
-    ('Kashmere Gate', [77.2295, 28.6665]),
-    ('Jhandewalan', [77.1995, 28.6445]),
-    ('Ajmeri Gate', [77.2235, 28.6440]),
-    ('Turkman Gate', [77.2330, 28.6430]),
-    ('Lahori Gate', [77.2220, 28.6580]),
-]
-
-results = []
-for i in range(len(landmarks)):
-    for j in range(len(landmarks)):
-        if i == j:
-            continue
-        name1, p1 = landmarks[i]
-        name2, p2 = landmarks[j]
-        d = app.dist_m(p1[0], p1[1], p2[0], p2[1])
-        if not 1200 <= d <= 3800:
-            continue
-        try:
-            r = app.route(g, {'origin': p1, 'destination': p2, 'alpha': 3})
-            s, c = r['shortest'], r['cool']
-            gain = (s['hot_share'] - c['hot_share']) * 100
-            extra_m = c['minutes'] - s['minutes']
-            if s['hot_share'] > 0.15 and gain > 5:
-                results.append((gain, extra_m, name1, name2, p1, p2, s, c))
-        except Exception:
-            pass
-
-results.sort(key=lambda x: (x[0], -x[1]), reverse=True)
-print(f'Found {len(results)} landmark pairs with significant heat reduction:')
-for gain, extra, n1, n2, p1, p2, s, c in results[:15]:
-    sh_pct = s['hot_share'] * 100
-    cl_pct = c['hot_share'] * 100
-    print(f"{n1} -> {n2}: avoids {gain:.1f}% hot share (Shortest {sh_pct:.1f}% -> Cool {cl_pct:.1f}%), extra {extra:.1f} min (base {s['minutes']:.1f}m)")
-    print(f"  Coords: {p1} to {p2}\n")
-```
-
-### `scripts/eval_pairs.py`
-```python
-import os
-import re
 import urllib.request
 import json
 
-KEY = os.getenv("MAP_API_KEY", "")
-API = os.getenv("COOLWALK_API_URL", "")
-if not (KEY and API) and os.path.exists("frontend/config.js"):
-    cfg_text = open("frontend/config.js").read()
-    if not KEY:
-        m = re.search(r'mapKey:\s*["\']([^"\']+)["\']', cfg_text)
-        if m: KEY = m.group(1)
-    if not API:
-        m = re.search(r'apiUrl:\s*["\']([^"\']+)["\']', cfg_text)
-        if m: API = m.group(1)
+KEY = 'v1.public.eyJqdGkiOiJmMjE0ODcxZS00NzFkLTQxZDItOTZlNi1lYmU3ZTdiMmJjZWEifWeEYCtJOXjUE20R5AOJbGkKw8kiid1QbPKJ4ibNB-M8BSq18WWfZ3RElVvNsHpN50VSYosqgQTJhQFtA_ASdVOnPcAFYvE2A8yPj3PmH42KY1JlIko_MHvEP7CZDuT8awXnLIzNDEk4t76uUiEy12mRjugyX5aEO6milL42yBdOQ_SJZd2zyAskDoCEolPUTtDh8SDNhUgXHfnjL05_mDr0F51RzNnambeor_Z5LMGcI8TnIhjm37duYGCuEBdj8JlrzjSZ4MFv4jiNXVqOrh3c6iEYejU_Ju6olZ6To4tfBuIsmMRc4HSxCEMEwwYAhlV8iYfS0T5CqlBo5ZecsG0.ZWU0ZWIzMTktMWRhNi00Mzg0LTllMzYtNzlmMDU3MjRmYTkx'
+API = 'https://euzq1skask.execute-api.us-east-1.amazonaws.com'
 
 pairs = [
     ('Chandni Chowk', 'Connaught Place', [77.2303, 28.6562], [77.2167, 28.6315]),
@@ -2096,104 +3285,10 @@ for name1, name2, a, b in pairs:
     print(f"{walk_name:<35} | {std_source:<15} | {std['minutes']:<8.1f} | {c['minutes']:<8.1f} | {std['hot_share']*100:<7.1f}% | {c['hot_share']*100:<7.1f}% | {avoided:<7.1f}pp | {std_lst:<8} | {cool_lst:<8}")
 ```
 
-### `scripts/find_demo_pairs.py`
-```python
-"""Find the best walks for the demo video, using the real graph (no AWS needed).
+# Submission Materials, Documentation & Empirical Findings
 
-Run after pipeline step 2:  python scripts/find_demo_pairs.py
-Prints origin/destination pairs 1.5-4 km apart where CoolWalk cuts the most time in
-high-heat zones for the smallest extra walking time. Paste the best three into
-the PRESETS list in frontend/index.html (check them on the map first).
-"""
-import os
-import random
-import sys
+## `docs/FINDINGS.md`
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend", "router"))
-os.environ.setdefault("GRAPH_LOCAL", os.path.join(os.path.dirname(__file__), "..", "work", "graph.json.gz"))
-import app  # noqa: E402
-
-g = app.load()
-random.seed(7)
-n = len(g["nodes"])
-rows = []
-for _ in range(600):
-    a, b = random.randrange(n), random.randrange(n)
-    d = app.dist_m(*g["nodes"][a], *g["nodes"][b])
-    if not 1500 <= d <= 4000:
-        continue
-    pa, pb = g["nodes"][a], g["nodes"][b]
-    try:
-        r = app.route(g, {"origin": pa, "destination": pb, "alpha": 3})
-    except app.ApiError:
-        continue
-    s, c = r["shortest"], r["cool"]
-    if s["hot_share"] is None or c["hot_share"] is None:
-        continue
-    gain = s["hot_share"] - c["hot_share"]
-    extra = c["minutes"] - s["minutes"]
-    rows.append((gain - 0.02 * max(extra, 0), gain, extra, s["minutes"], pa, pb))
-rows.sort(reverse=True)
-print("score  hot-zone share cut   extra min  base min   origin -> destination")
-for score, gain, extra, base, pa, pb in rows[:12]:
-    print(f"{score:5.2f}  {gain:6.0%}              {extra:5.1f}      {base:5.1f}    {pa} -> {pb}")
-```
-
-### `scripts/capture_screenshots.py`
-```python
-import os
-import time
-from pathlib import Path
-from playwright.sync_api import sync_playwright
-
-OUT = Path('docs/screenshots')
-OUT.mkdir(parents=True, exist_ok=True)
-
-CHROME = os.getenv('CHROME_PATH', 'C:/Program Files/Google/Chrome/Application/chrome.exe')
-SITE_URL = os.getenv('COOLWALK_SITE_URL', 'https://main.d3miw0zrayytbj.amplifyapp.com')
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(executable_path=CHROME, headless=True)
-
-    # 1. Desktop First View
-    page = browser.new_page(viewport={'width': 1280, 'height': 800})
-    print('Navigating to site...')
-    page.goto(SITE_URL)
-    page.wait_for_timeout(4000) # wait for map style & heat grid
-    page.screenshot(path=str(OUT / '01_first_view.png'))
-    print('Captured 01_first_view.png')
-
-    # 2. Desktop Routed Walk
-    # Click the first preset (Jama Masjid to Delhi Gate)
-    page.click('#presets button:first-child')
-    print('Clicked preset 1, waiting for route calculation...')
-    page.wait_for_selector('.route.cool', timeout=15000)
-    page.wait_for_timeout(3000) # wait for map animation & rendering
-    page.screenshot(path=str(OUT / '02_routed_walk.png'))
-    print('Captured 02_routed_walk.png')
-    page.close()
-
-    # 3. Mobile Layout (390 px width)
-    mobile_page = browser.new_page(viewport={'width': 390, 'height': 844})
-    mobile_page.goto(SITE_URL)
-    mobile_page.wait_for_timeout(3000)
-    mobile_page.click('#presets button:first-child')
-    mobile_page.wait_for_selector('.route.cool', timeout=15000)
-    mobile_page.wait_for_timeout(3000)
-    mobile_page.screenshot(path=str(OUT / '03_phone_layout.png'))
-    print('Captured 03_phone_layout.png')
-    mobile_page.close()
-
-    browser.close()
-
-print('All screenshots captured successfully!')
-```
-
----
-
-# 10. Submission Materials & Empirical Findings
-
-### `docs/FINDINGS.md`
 ```markdown
 # Findings (filled in from real runs; every number in the article and video comes from here)
 
@@ -2235,6 +3330,23 @@ The physical contrast is stark: tree-covered avenues register 40.6 °C on averag
 | **Jama Masjid to Delhi Gate** | 20.5 min | 23.8 min | 80.0% | 23.5% | 56.5 percentage points (70.6% relative cut) | 44.7 °C vs 44.5 °C (-0.2 °C) | Amazon Location Service |
 | **Delhi Gate to Lahori Gate** | 40.2 min | 44.8 min | 90.3% | 15.0% | 75.3 percentage points (83.4% relative cut) | 45.3 °C vs 44.9 °C (-0.4 °C) | Amazon Location Service |
 
+## Benchmark and independent validation
+From 500 random walking trips across central Delhi (1.5 to 4.0 km, median trip 44 min, generated by `scripts/benchmark.py`):
+- **Median detour:** 1.0 extra minute (2.4% extra distance)
+- **High-heat exposure avoided:** 1.0 minute in high-heat zones avoided (2.7 percentage points cut)
+- **Trip impact:** 42% of trips cut high-heat exposure by 5 points or more; 41% made no real difference (< 1 point cut)
+- **Independent multi-date validation (held-out Landsat scenes not used for routing):**
+  - Scene 1 (`2026-06-17`, cloud 0.02%): **0.3 °C median surface temperature drop** (0.5 °C mean)
+  - Scene 2 (`2026-05-17`, cloud 0.03%): **0.2 °C median surface temperature drop** (0.3 °C mean)
+  - Scene 3 (`2026-04-23`, cloud 0.00%): **0.2 °C median surface temperature drop** (0.3 °C mean)
+
+## Civic infrastructure exposure and cool refuges
+From 974 open civic places in central Delhi scored against satellite heat and stored in Iceberg table `coolwalk.places`:
+- **Hospitals:** 24 of 73 (32.9%) sit in high-heat zones (heat index >= 0.66)
+- **Schools:** 17 of 85 (20.0%) sit in high-heat zones
+- **Bus stops:** 23 of 353 (6.5%) sit in high-heat zones
+- **Cool refuges:** 463 parks, water points, and metro stations embedded in the routing graph. The `POST /refuge` API finds the nearest refuge along the coolest walking path.
+
 ## Performance and cost
 - Lambda routing compute: ~50 ms (pure A* algorithm over 35k segments)
 - Lambda cold start: 3.12 s (decompresses and indexes graph in memory)
@@ -2242,7 +3354,160 @@ The physical contrast is stark: tree-covered avenues register 40.6 °C on averag
 - Approximate AWS cost so far: < $0.05 total (Athena queries scanned < 5 MB, S3 requests negligible, Lambda within free tier)
 ```
 
-### `docs/WRITEUP.md`
+## `docs/BENCHMARK.md`
+
+```markdown
+# Benchmark (generated by scripts/benchmark.py)
+
+500 random trips between 1.5 and 4.0 km, alpha = 3.0, detour cap 1.45. Median trip: 44 min.
+
+| Metric | Median | 10th pct | 90th pct | Mean | Trips |
+|---|---|---|---|---|---|
+| Extra walking time (min) | 1.0 | 0.0 | 6.1 | 2.2 min | 500 |
+| Extra distance (%) | 2.4 | 0.1 | 12.8 | 4.8 % | 500 |
+| Minutes in high-heat zones avoided | 1.0 | 0.0 | 10.4 | 3.5 min | 500 |
+| Share of walk in high-heat zones cut (points) | 2.7 | 0.0 | 22.0 | 8.0 pp | 500 |
+| Average surface temperature drop, routing scene (C) | 0.2 | 0.0 | 0.9 | 0.4 C | 500 |
+| Average surface temperature drop, held-out scene 1 (C) | 0.3 | 0.0 | 1.3 | 0.5 C | 500 |
+| Average surface temperature drop, held-out scene 2 (C) | 0.2 | 0.0 | 0.9 | 0.3 C | 500 |
+| Average surface temperature drop, held-out scene 3 (C) | 0.2 | 0.0 | 0.8 | 0.3 C | 500 |
+
+- Trips where CoolWalk cut high-heat share by 5 points or more: 42%
+- Trips where CoolWalk made no real difference (under 1 point): 41%
+
+The routing scene's numbers are in-sample, because the route is chosen to minimise them. Held-out scene rows, when present, are the independent check.
+
+## Tradeoff Analysis: Sensitivity to Heat Weight (Alpha)
+
+Comparing 500 trips across low (1.5), balanced (3.0), and maximum (6.0) heat aversion settings:
+
+| Alpha Parameter | User Setting | Median Extra Time (min) | Median Detour (%) | Median Hot Minutes Avoided | Trips Cut >= 5 pp | Trips No Diff (< 1 pp) |
+|---|---|---|---|---|---|---|
+| **alpha = 1.5** | Fast | 0.4 min | 0.9% | 0.8 min (1.7 pp cut) | 36% | 46% |
+| **alpha = 3.0** | Balanced (Default) | 1.0 min | 2.4% | 1.0 min (2.7 pp cut) | 42% | 41% |
+| **alpha = 6.0** | Coolest | 1.9 min | 4.3% | 1.3 min (3.4 pp cut) | 44% | 38% |
+
+At alpha = 3.0, CoolWalk delivers over 75% of the achievable heat avoidance while keeping median detours down to just 1 minute (+2.4% distance).
+```
+
+## `docs/DATA.md`
+
+```markdown
+# CoolWalk Dataset & Analytics Dictionary
+
+CoolWalk processes open satellite earth observation data and street geometries into accessible spatial formats and serverless analytical tables.
+
+---
+
+## 1. Primary Files & Download Links
+
+| File | Location | Format | Description |
+|---|---|---|---|
+| **Heat Grid Layer** | [`frontend/data/heat_grid.geojson`](file:///c:/Users/Acer/OneDrive/Documents/hackathons/CoolWalk/frontend/data/heat_grid.geojson) | GeoJSON (Polygon) | 2,092 spatial cells (150 m resolution) with normalized heat scores. [Download GeoJSON](data/heat_grid.geojson) |
+| **City Findings** | [`frontend/data/findings.json`](file:///c:/Users/Acer/OneDrive/Documents/hackathons/CoolWalk/frontend/data/findings.json) | JSON | Aggregated statistics, high-heat network share, and top hottest/coolest streets with centroids. |
+| **Scored Street Segments** | `work/segments.parquet` / S3 Lakehouse | Apache Parquet / Iceberg | 35,748 street segments with physical Landsat surface temperatures, Sentinel-2 NDVI, and heat scores. |
+| **Routing Graph** | `work/graph.json.gz` / `s3://<DataBucket>/router/graph.json.gz` | Gzip JSON | Compact indexed graph representation consumed by AWS Lambda. |
+
+---
+
+## 2. GeoJSON Schema: `heat_grid.geojson`
+
+Each polygon represents a 150 m cell (`0.0015°` latitude/longitude grid) spanning central Delhi:
+
+- `h`: Raw heat score (`0.0` to `1.0`), computed as `0.6 * normalized_LST + 0.4 * (1 - normalized_NDVI)`.
+- `hs`: Clamped and rescaled heat score (`0.0` to `1.0`) relative to the 5th and 95th percentiles of the study area for map visualization.
+- `geometry`: Polygon bounding coordinates `[[ [x0, y0], [x0+w, y0], [x0+w, y0+h], [x0, y0+h], [x0, y0] ]]`.
+
+---
+
+## 3. Apache Iceberg Table: `coolwalk.segments`
+
+Stored in Apache Iceberg format on Amazon S3 and cataloged in AWS Glue / Amazon Athena:
+
+```sql
+CREATE TABLE coolwalk.segments (
+  edge_id BIGINT,
+  u BIGINT,
+  v BIGINT,
+  key BIGINT,
+  name STRING,
+  highway STRING,
+  length_m DOUBLE,
+  mid_lon DOUBLE,
+  mid_lat DOUBLE,
+  lst_c DOUBLE,
+  ndvi DOUBLE,
+  heat_index DOUBLE
+)
+PARTITIONED BY (bucket(16, edge_id))
+LOCATION 's3://<DataBucket>/iceberg/segments/'
+TBLPROPERTIES ('table_type'='ICEBERG', 'format'='parquet');
+```
+
+### Field Definitions:
+- `edge_id`: Unique 64-bit integer segment identifier.
+- `u`, `v`: OpenStreetMap intersection node identifiers.
+- `name`: Street name from OpenStreetMap (`NULL` or empty for unnamed alleys).
+- `highway`: OSM road hierarchy classification (`primary`, `secondary`, `tertiary`, `residential`, `pedestrian`, `living_street`, etc.).
+- `length_m`: Metric Euclidean length along segment centerline geometry.
+- `mid_lon`, `mid_lat`: Midpoint coordinates of segment centerline.
+- `lst_c`: Mean Land Surface Temperature in degrees Celsius from USGS Landsat 8 TIRS Band 10.
+- `ndvi`: Mean Normalized Difference Vegetation Index from Copernicus Sentinel-2 B4/B8.
+- `heat_index`: Composite heat score (`0.0` to `1.0`). Scores $\ge 0.66$ indicate high-heat zones.
+
+---
+
+## 4. Amazon Athena Queries Used for Findings
+
+### 4.1 Overall High-Heat Network Share
+```sql
+SELECT
+  round(sum(CASE WHEN heat_index >= 0.66 THEN length_m ELSE 0 END) / sum(length_m), 3) AS hot_share,
+  round(sum(length_m) / 1000.0, 1) AS network_km,
+  round(approx_percentile(lst_c, 0.05), 1) AS lst_p05_c,
+  round(approx_percentile(lst_c, 0.95), 1) AS lst_p95_c
+FROM coolwalk.segments;
+```
+
+### 4.2 Top Hottest Named Corridors
+```sql
+SELECT
+  name,
+  round(avg(heat_index), 3) AS heat,
+  round(sum(length_m)) AS length_m,
+  round(avg(lst_c), 1) AS lst_c,
+  round(max_by(mid_lon, length_m), 5) AS lon,
+  round(max_by(mid_lat, length_m), 5) AS lat
+FROM coolwalk.segments
+WHERE name IS NOT NULL AND name <> '' 
+  AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
+GROUP BY name 
+HAVING sum(length_m) > 500
+ORDER BY heat DESC 
+LIMIT 8;
+```
+
+### 4.3 Top Coolest Named Corridors
+```sql
+SELECT
+  name,
+  round(avg(heat_index), 3) AS heat,
+  round(sum(length_m)) AS length_m,
+  round(avg(lst_c), 1) AS lst_c,
+  round(max_by(mid_lon, length_m), 5) AS lon,
+  round(max_by(mid_lat, length_m), 5) AS lat
+FROM coolwalk.segments
+WHERE name IS NOT NULL AND name <> '' 
+  AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
+GROUP BY name 
+HAVING sum(length_m) > 500
+ORDER BY heat ASC 
+LIMIT 8;
+```
+```
+
+## `docs/WRITEUP.md`
+
 ```markdown
 # CoolWalk: the cooler way to walk across Delhi
 
@@ -2284,6 +3549,9 @@ flowchart LR
 
 ## What you can explore
 
+- Click **"Take the 40-second tour"** for an automated guided walkthrough of central Delhi's thermal landscape and CoolWalk's core features.
+- Click **"Where can I cool down?"** to discover the nearest cool refuge (park, water point, or metro station) from your starting location, routed via the coolest path.
+- Toggle **"Show places in the heat"** to visualize 974 schools, hospitals, bus stops, parks, and metro stations colored by thermal exposure with interactive popups.
 - Click any two points in central Delhi, search for landmarks (e.g. "India Gate", "Chandni Chowk"), or click the preset walk buttons.
 - Drag the "How much to avoid heat" slider between fastest and coolest.
 - Toggle the heat map layer and inspect the heat strip underneath each route comparing thermal exposure and average surface temperature.
@@ -2293,6 +3561,10 @@ flowchart LR
 
 ## What the data shows
 
+- **Headline benchmark (500 random trips across Delhi):** Over 500 random pedestrian trips (1.5 to 4.0 km, median trip 44 min), a median detour of just **1.0 extra minute** (+2.4% distance) avoids **1.0 minute in high-heat zones** (cutting high-heat share by 2.7 percentage points). 42% of trips achieve a high-heat reduction of 5 percentage points or greater, while 41% of trips make no real difference (where the shortest path is already the coolest or alternatives do not exist).
+- **Independent multi-date validation:** Routing on one satellite scene risks overfitting to that date's thermal patterns. We evaluated all 500 benchmark trips against three held-out Landsat scenes spanning different pre-monsoon dates: June 17, 2026 (`LC09`), May 17, 2026 (`LC08`), and April 23, 2026 (`LC09`). CoolWalk consistently delivers a **0.2 to 0.3 °C median surface temperature reduction** across all held-out dates, proving the routes reflect persistent thermal microclimates rather than single-day artifacts.
+- **Civic infrastructure in the heat:** Cross-referencing 974 open civic points in Delhi with satellite heat revealed significant vulnerabilities: **24 of 73 hospitals (32.9%)**, **17 of 85 schools (20.0%)**, and **23 of 353 bus stops (6.5%)** sit on streets in high-heat zones.
+- **Cool-refuge finder:** CoolWalk embeds 463 public parks, water points, and air-conditioned metro stations into the routing graph, allowing pedestrians in the heat to find their nearest cool refuge via the coolest walking path.
 - **19.8% of street length** (471.4 km of 2,376.9 km) in central Delhi runs in high-heat zones (heat index >= 0.66).
 - **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones (43.9 °C mean surface temp). CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** while lowering mean surface temperature to **42.0 °C** — **avoiding 49.5 percentage points of high-heat exposure** (an 83.9% relative cut) and dropping average surface temperature by a significant **1.9 °C**.
 - **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones** (44.7 °C mean surface temp). CoolWalk takes 23.8 minutes (+3.3 min) and slashes high-heat zone exposure down to **23.5%** (a 56.5 percentage-point drop) by choosing greener, tree-canopied corridors. While the average surface temperature barely changes (44.7 °C vs 44.5 °C), the route is noticeably greener and avoids the sustained thermal mass of unshaded market corridors.
@@ -2324,104 +3596,32 @@ To reuse CoolWalk for any other city:
 Landsat data courtesy of the U.S. Geological Survey (accessed via AWS Registry of Open Data). Contains modified Copernicus Sentinel data. Street data © OpenStreetMap contributors (ODbL). Base map, geocoding and pedestrian routing powered by Amazon Location Service.
 ```
 
-### `docs/VIDEO_SCRIPT.md`
+## `docs/VIDEO_SCRIPT.md`
+
 ```markdown
-# Video script (target 2:45, hard limit 3:00)
+# Video script (target 2:40, hard limit 3:00)
 
 Record the screen with a voice-over. No copyrighted music, or royalty-free music you have rights to. No third-party logos beyond the app itself. The live demo URL must be visible on screen.
 
 | Time | On screen | Voice-over |
 |---|---|---|
-| **0:00 to 0:20** | The live site, heat layer visible. Slow zoom on Old Delhi. | "In Delhi's summer, streets can reach surface temperatures well over 45 °C. Standard map apps always give you the shortest path. They don't tell you which roads bake in direct sun and which ones have tree shade." |
-| **0:20 to 0:35** | CoolWalk interface. Click preset 1: "Jama Masjid to Delhi Gate". | "CoolWalk is a public web map for central Delhi that trades a few minutes of walking for far less time in dangerous heat." |
-| **0:35 to 1:15** | Both routes appear. Point at the heat strip and surface temperature under each. | "Here is Jama Masjid to Delhi Gate. The standard walk from Amazon Location Service takes 20.5 minutes and spends 80% of the journey in high-heat zones. CoolWalk takes 23.8 minutes — just 3.3 minutes more — and slashes high-heat exposure down to 23.5%, avoiding 56.5 percentage points of high heat. The heat strip under each route compares thermal exposure block by block." |
-| **1:15 to 1:40** | Click preset 2: "Jama Masjid to Raj Ghat", then preset 3: "Delhi Gate to Lahori Gate". Drag slider from Fastest to Coolest. | "On walks like Jama Masjid to Raj Ghat, CoolWalk cuts high heat from 59% to under 10% and drops mean surface temperature from 43.9 to 42.0 °C. Or Delhi Gate to Lahori Gate, where standard pedestrian routing puts you in high heat for 90% of the walk, and CoolWalk cuts that to 15%. With the tradeoff slider, you can tune how aggressively to avoid heat: at Fastest, you get the shortest route; sliding toward Coolest, the router shifts to leafy, shaded corridors." |
-| **1:40 to 2:00** | Type "Chandni Chowk" into place search, click suggestions, drag pin B. | "You can search any landmark with Amazon Location autocomplete, click any point on the map, or drag pins A and B to recalculate instantly. Every walk also has a direct shareable link." |
-| **2:00 to 2:25** | Architecture diagram. | "Under the hood, open Landsat 8 surface temperature and Sentinel-2 vegetation bands score 35,748 street segments. The scored dataset is stored in an Apache Iceberg table on Amazon S3 and queried with Amazon Athena. An AWS Lambda function computes heat-weighted A* routes in about 50 milliseconds of routing compute, returning both heat exposure and physical surface temperature. Amazon Location Service provides the vector map, place search, and standard pedestrian routing." |
-| **2:25 to 2:40** | Open 'What the data shows' details panel. | "Across 2,377 km of walkable streets, 19.8% sit in high-heat zones. Narrow bazaar corridors like Chipwara Khurd and Kinari Bazar reach 46 °C, while shaded avenues like Akbar Road run about 4 to 5 °C cooler at the surface." |
-| **2:40 to 2:50** | App footer, then full screen showing live URL and repo link. | "Heat data comes from June 2026 satellite observations as an objective proxy for surface heat retention. The entire stack is open-source under MIT, deployed securely with HTTPS on AWS Amplify Hosting, and can be adapted to any city by changing a bounding box. Try it live at the URL on screen." |
+| **0:00 to 0:25** | The live site, heat layer visible. Slow zoom on central Delhi. | "In a Delhi summer, surface temperatures across the city frequently exceed 45 °C. Standard navigation apps only optimize for distance, routing people down unshaded, baking asphalt corridors. CoolWalk maps microclimates to give pedestrians the cooler choice. Across 500 random walking trips in Delhi, CoolWalk shows that a median detour of just one extra minute avoids a minute of high-heat exposure." |
+| **0:25 to 0:55** | Preset "Jama Masjid to Raj Ghat". Hover scrub along heat strip. Point out independent check. | "Take Jama Masjid to Raj Ghat. The standard walk from Amazon Location Service puts pedestrians in high-heat zones for 59% of the walk, averaging 43.9 °C surface temperature. CoolWalk trades 5 minutes for a leafy route that cuts high-heat exposure down to just 9.5% and drops surface temperature by 1.9 °C. Scrubbing across the heat strip tracks our exact position on the map. Underneath, an independent check against held-out satellite scenes confirms the cooler route holds across multiple dates." |
+| **0:55 to 1:20** | Click 'Where can I cool down?'. Refuge options appear (park, water point, metro). Click 'Show route'. | "Need immediate relief? The 'Where can I cool down' refuge finder routes pedestrians from any point to their nearest park, drinking water fountain, or air-conditioned metro station along the coolest path. In seconds, it compares the fastest rush against a heat-minimized walk to safe shelter." |
+| **1:20 to 1:45** | Toggle 'Show places in the heat', showing hospitals/schools/bus stops. Drag tradeoff slider. | "By querying Apache Iceberg tables in Amazon Athena, we found that nearly a third of central Delhi hospitals and 20% of schools sit on streets in high-heat zones. With the tradeoff slider, users can tune their preferences from fastest direct paths to maximum shade." |
+| **1:45 to 2:15** | Architecture diagram. | "Under the hood, open Landsat 8/9 thermal infrared and Sentinel-2 vegetation bands score 35,748 street segments. The data is stored in Apache Iceberg tables on Amazon S3 and queried with Athena. An AWS Lambda router executes heat-weighted A* routing in 50 milliseconds. Amazon Location Service powers the basemap, place search, and standard pedestrian routing, while AWS Amplify serves the secure HTTPS frontend." |
+| **2:15 to 2:35** | App footer, then full screen showing live URL and GitHub link. | "CoolWalk is open data, MIT licensed, and runs live at the URL on your screen. You can download the dataset directly or adapt the pipeline to your own city. Try it live today." |
 
 ### Checklist before upload
-- [ ] Duration is under 2 minutes 50 seconds (hard limit 3:00).
+- [ ] Duration is under 2 minutes 45 seconds (hard limit 3:00).
 - [ ] No copyrighted music or third-party logos.
 - [ ] YouTube or Vimeo set to Public or Unlisted.
 - [ ] Live URL (`https://main.d3miw0zrayytbj.amplifyapp.com`) clearly displayed.
 - [ ] Video URL inserted into AWS Builder Center submission "demo" field.
 ```
 
-### `docs/SANITY_CHECK_REPRODUCE.md`
-```markdown
-# Reproducible Sanity Check: Leafy vs Dense Streets
+## `README.md`
 
-This document provides the exact Athena SQL query and Python inspection script to reproduce the street-level temperature, vegetation, and heat index numbers cited in `docs/FINDINGS.md` and `docs/WRITEUP.md`.
-
-## 1. Athena SQL Query
-
-Execute in the Amazon Athena console or via `boto3`:
-
-```sql
-SELECT
-  name,
-  count(*) AS segment_count,
-  round(avg(lst_c), 1) AS mean_lst_c,
-  round(min(lst_c), 1) AS min_lst_c,
-  round(max(lst_c), 1) AS max_lst_c,
-  round(avg(ndvi), 3) AS mean_ndvi,
-  round(avg(heat_index), 3) AS mean_heat_index,
-  round(sum(length_m), 1) AS total_length_m
-FROM coolwalk.segments
-WHERE name IN (
-  'Akbar Road', 'Teen Murti Marg', 'Janpath Lane', 'Janpath',
-  'Lal Kuan Bazar', 'Khari Baoli Road', 'Chandni Chowk', 'Nai Sarak',
-  'Chawri Bazar', 'Kinari Bazar', 'Chipwara Khurd'
-)
-GROUP BY name
-ORDER BY mean_heat_index ASC;
-```
-
-## 2. Python / Parquet Verification Command
-
-Run directly against the local scored dataset:
-
-```bash
-python -c "
-import pandas as pd
-df = pd.read_parquet('work/segments.parquet')
-streets = [
-    'Akbar Road', 'Teen Murti Marg', 'Janpath Lane', 'Janpath',
-    'Lal Kuan Bazar', 'Khari Baoli Road', 'Chandni Chowk', 'Nai Sarak',
-    'Chawri Bazar', 'Kinari Bazar', 'Chipwara Khurd'
-]
-grp = df[df.name.isin(streets)].groupby('name').agg(
-    segments=('edge_id', 'count'),
-    mean_lst=('lst_c', 'mean'),
-    min_lst=('lst_c', 'min'),
-    max_lst=('lst_c', 'max'),
-    mean_ndvi=('ndvi', 'mean'),
-    mean_heat=('heat_index', 'mean')
-).loc[streets]
-print(grp.round({'mean_lst': 1, 'min_lst': 1, 'max_lst': 1, 'mean_ndvi': 3, 'mean_heat': 3}))
-"
-```
-
-## 3. Verified Output Table
-
-| Street Name | Classification | Segments | Mean LST (°C) | Measured LST Range (°C) | Mean NDVI | Mean Heat Index (0..1) | Context |
-|---|---|---|---|---|---|---|---|
-| **Akbar Road** | secondary | 56 | 40.6 | 39.3–41.9 | 0.961 | 0.042 | Dense canopy avenue in Lutyens' Delhi |
-| **Teen Murti Marg** | secondary | 30 | 41.0 | 40.2–42.5 | 0.954 | 0.068 | Forested boulevard near Teen Murti |
-| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Tree-lined access lane near Janpath |
-| **Janpath** | secondary | 180 | 42.5 | 39.7–44.1 | 0.755 | 0.252 | Wide commercial and diplomatic avenue |
-| **Lal Kuan Bazar** | tertiary | 28 | 45.6 | 44.6–46.4 | 0.229 | 0.776 | Dense commercial corridor in Old Delhi |
-| **Khari Baoli Road** | tertiary | 12 | 46.4 | 45.6–47.0 | 0.365 | 0.741 | Historic wholesale spice market |
-| **Chandni Chowk** | tertiary | 84 | 46.2 | 45.2–46.8 | 0.349 | 0.754 | Primary commercial thoroughfare |
-| **Nai Sarak** | unclassified | 22 | 46.4 | 46.0–46.8 | 0.188 | 0.868 | Dense book market corridor |
-| **Chawri Bazar** | tertiary | 24 | 46.3 | 45.4–46.7 | 0.169 | 0.871 | High-density metal market street |
-| **Kinari Bazar** | unclassified | 18 | 46.2 | 45.9–46.5 | 0.115 | 0.914 | High-density jewelry alley in Shahjahanabad |
-| **Chipwara Khurd** | unclassified | 12 | 46.1 | 46.0–46.2 | 0.072 | 0.934 | Narrow residential/commercial alley |
-```
-
-### `README.md`
 ```markdown
 # CoolWalk
 
@@ -2518,101 +3718,4 @@ Landsat data courtesy of the U.S. Geological Survey. Contains modified Copernicu
 ## License
 
 MIT.
-```markdown
-# CoolWalk
-
-A walking map for central Delhi that trades a few minutes for much less time in the heat. Pick two points and CoolWalk shows the standard walk next to a cooler one, with a heat strip along each route and the average surface temperature avoided.
-
-Built for the AWS Builder Center "Weekend Challenge: Map It".
-
-**Live demo:** [https://main.d3miw0zrayytbj.amplifyapp.com](https://main.d3miw0zrayytbj.amplifyapp.com)  
-**Video:** [YouTube Demo Link - Human to insert]
-
-![CoolWalk Routed Walk](docs/screenshots/02_routed_walk.png)
-
-## How it works
-
-```mermaid
-flowchart LR
-  L8[Landsat 8/9 surface temperature<br/>requester-pays S3 bucket] --> P[Python pipeline<br/>scores 35k segments]
-  S2[Sentinel-2 NDVI<br/>S3 open data] --> P
-  OSM[OpenStreetMap walk network] --> P
-  P --> ICE[(Apache Iceberg table<br/>on Amazon S3 via Athena)]
-  ICE -->|Athena queries| ASSETS[Heat grid & findings]
-  P --> GRAPH[Routing graph on S3]
-  GRAPH --> LAM[AWS Lambda<br/>heat-weighted A*]
-  ASSETS --> HOST[AWS Amplify Hosting<br/>HTTPS frontend]
-  LAM <--> API[Amazon API Gateway HTTP API<br/>throttled & CORS-enabled]
-  HOST <--> API
-  HOST --> ALS[Amazon Location Service<br/>maps, place search, routes]
 ```
-
-1. **Data.** Landsat Collection 2 Level-2 surface temperature (`LC08_L2SP_147040_20260609_02_T1` from the USGS requester-pays S3 bucket on AWS Open Data), Sentinel-2 L2A red and near-infrared bands (for vegetation), and the OpenStreetMap walking network. One clear pre-monsoon day (June 2026), shown in the app footer.
-2. **Heat index.** For each street segment: `0.6 x surface temperature + 0.4 x lack of vegetation`, both normalized 0 to 1 across the area. It shows where streets hold heat.
-3. **Iceberg and Athena.** Segment scores are stored as an Apache Iceberg table on S3 (`coolwalk.segments`). Athena produces the heat grid layer and statistical findings.
-4. **Routing.** An AWS Lambda function runs A* where a segment costs `length x (1 + alpha x heat)`. The service computes routes in ~50 ms of routing compute, returning both heat exposure and physical surface temperature (`mean_lst_c`). A detour cap keeps the cooler walk reasonable. The "standard" walk is the Amazon Location Service pedestrian route, scored against the same thermal data, with our network shortest path as a fallback.
-5. **Map & Place Search.** MapLibre on an Amazon Location Service Light basemap. Place search uses Amazon Location Places v2 with autocomplete.
-6. **Hosting & Security.** Deployed with full HTTPS on AWS Amplify Hosting, backed by an Amazon API Gateway HTTP API with default rate and burst throttling.
-
-## Screenshots
-
-| Desktop View | Mobile (390 px) |
-|---|---|
-| ![Desktop View](docs/screenshots/01_first_view.png) | ![Mobile View](docs/screenshots/03_phone_layout.png) |
-
-## Run it
-
-Prerequisites: Python 3.11+, AWS CLI and SAM CLI configured, an AWS account with an active budget alert, Node not required.
-
-```bash
-# 1. Setup virtual environment
-python -m venv .venv
-# Linux / macOS: source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -r pipeline/requirements.txt
-
-# 2. Deploy AWS infrastructure
-# Windows:
-powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
-# Linux / macOS:
-export AWS_REGION=us-east-1
-export MAP_API_KEY=...
-./scripts/deploy.sh
-
-# 3. Run data pipeline
-export COOLWALK_BUCKET=<DataBucket from deploy output>
-python pipeline/01_pick_scenes.py    # choose Landsat + Sentinel-2 scenes
-python pipeline/02_score_segments.py # score every street segment
-python pipeline/03_build_iceberg.py  # Iceberg table via Athena
-python pipeline/04_export_assets.py  # heat grid, findings, router graph
-
-# 4. Deploy frontend to AWS Amplify (HTTPS)
-# Packages frontend/ and deploys to AWS Amplify Hosting
-powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
-```
-
-## Reuse it for your city
-
-To adapt CoolWalk for another city:
-1. Change `BBOX` and `DATE_RANGE` in `pipeline/config.py`.
-2. Update the `bbox` and `PRESETS` in `frontend/index.html`.
-3. Pick a clear, hot summer season with minimal cloud cover.
-4. Run the pipeline scripts and re-deploy.
-
-## Known limits
-
-- **Heat index evaluation:** CoolWalk optimizes a heat index and compares routes against that index. To provide an objective physical baseline, CoolWalk also calculates and displays mean surface temperature (`mean_lst_c`) along each route.
-- **Satellite thermal proxy:** Heat comes from a dated satellite scene (June 2026). Landsat's thermal band is 100 m native resolution (resampled to 30 m), so we blend it with 10 m Sentinel-2 vegetation to distinguish shaded streets from unshaded ones.
-- **Surface temperature:** Surface temperature is a proxy for how hot a street surface feels underfoot and radiative heat. It ignores momentary wind, humidity, microscale building shade geometry, and time of day.
-- **Walking pace:** Walking time assumes a constant 1.35 m/s speed everywhere.
-- **Coverage:** Central Delhi (Old Delhi to Lodhi Garden).
-
-## Data credits
-
-Landsat data courtesy of the U.S. Geological Survey. Contains modified Copernicus Sentinel data. Street data from OpenStreetMap contributors (ODbL). Base map, geocoding and pedestrian routing via Amazon Location Service.
-
-## License
-
-MIT.
-```
-

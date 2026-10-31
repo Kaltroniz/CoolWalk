@@ -34,6 +34,7 @@ Resources:
         Health: { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /health, Method: GET } }
         Route:  { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /route,  Method: POST } }
         Score:  { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /score,  Method: POST } }
+        Refuge: { Type: HttpApi, Properties: { ApiId: !Ref Api, Path: /refuge, Method: POST } }
 
   Api:
     Type: AWS::Serverless::HttpApi

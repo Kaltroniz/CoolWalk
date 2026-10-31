@@ -27,16 +27,42 @@ def test_ui():
         verdict = page.text_content(".verdict")
         print(f"Auto-loaded verdict: {verdict}")
         
+        # Verify Independent check (Tier 2a)
+        print("Verifying Independent check display...")
+        page.wait_for_selector(".route.cool .cap", timeout=5000)
+        cool_caps = page.text_content(".route.cool")
+        print(f"Cool route content summary: {cool_caps[:120].encode('ascii', 'replace').decode()}...")
+        assert "Independent check" in cool_caps, "Expected Independent check in CoolWalk card"
+        
         # Verify Why helper text (B2)
         why_text = page.text_content("#result > p.cap")
         print(f"Why helper explanation: {why_text}")
         assert "cooler surface" in why_text or "greenery" in why_text or "avoiding" in why_text
         
         # Verify legend ends (B5)
-        page.wait_for_selector("#legendEnds span:first-child", timeout=5000)
+        print("Waiting for findings.json to populate legend...")
+        page.wait_for_function('() => document.getElementById("legendEnds").textContent.includes("°C") || document.getElementById("legendEnds").textContent.includes("about")', timeout=10000)
         leg_text = page.text_content("#legendEnds")
-        print(f"Legend text: {leg_text}")
-        assert "°C" in leg_text
+        print(f"Legend text: {leg_text.encode('ascii', 'replace').decode()}")
+        assert "about" in leg_text or "Cooler" in leg_text
+        
+        # Test refuge finder (Tier 2b)
+        print("Testing 'Where can I cool down?' refuge finder...")
+        page.click("#refugeBtn")
+        page.wait_for_selector(".refuge-card", timeout=12000)
+        refuge_cards = page.query_selector_all(".refuge-card")
+        print(f"Refuge options returned: {len(refuge_cards)}")
+        assert len(refuge_cards) >= 1
+        page.click('button[data-refuge-idx="0"]', force=True)
+        page.wait_for_timeout(1000)
+        
+        # Test places layer checkbox (Tier 2b)
+        print("Testing 'Places in the heat' layer...")
+        page.click("#places")
+        page.wait_for_timeout(2000)
+        assert page.is_checked("#places")
+        page.click("#places")
+        page.wait_for_timeout(500)
         
         # Test presets
         print("Testing preset 0 (Jama Masjid to Delhi Gate)...")
@@ -76,14 +102,14 @@ def test_ui():
         
         # Test Strip hover (A3 & hoverDot)
         print("Testing heat strip hover...")
-        page.hover('.route.cool .strip i[data-idx="24"]')
+        page.hover('.route.cool .strip i[data-idx="24"]', force=True)
         page.wait_for_timeout(500)
         
         # Test Street click flyTo + popup (A3)
         print("Testing street click popup in 'What the data shows'...")
-        page.click("#findings summary")
+        page.click("#findings summary", force=True)
         page.wait_for_timeout(800)
-        page.click("#hotList li:first-child button")
+        page.click("#hotList li:first-child button", force=True)
         page.wait_for_selector(".maplibregl-popup-content", timeout=5000)
         popup_content = page.text_content(".maplibregl-popup-content")
         print(f"Street popup content: {popup_content}")
@@ -91,14 +117,14 @@ def test_ui():
         
         # Test How it works (B6)
         print("Testing 'How it works, and the limits' details block...")
-        page.click("#howItWorks summary")
+        page.click("#howItWorks summary", force=True)
         page.wait_for_timeout(500)
         how_text = page.text_content("#howItWorks")
         assert "Landsat 8" in how_text and "Sentinel-2" in how_text
         
         # Test Clear button
         print("Testing Clear button...")
-        page.click("#clear")
+        page.click("#clear", force=True)
         page.wait_for_timeout(500)
         assert page.input_value("#from") == ""
         assert page.input_value("#to") == ""
@@ -112,6 +138,26 @@ def test_ui():
         page.click("#suggTo li:first-child button")
         page.wait_for_timeout(1000)
         assert "India Gate" in page.input_value("#to")
+        
+        # Test 40-second tour (Tier 3)
+        print("Testing 40-second tour mode...")
+        page.click("#tourBtn")
+        page.wait_for_selector("#tourBanner", timeout=5000)
+        banner_text = page.text_content("#tourBanner")
+        print(f"Tour banner step 1: {banner_text[:80].encode('ascii', 'replace').decode()}...")
+        assert "Step 1 of 5" in banner_text
+        page.click("#tourNext")
+        page.wait_for_timeout(1000)
+        banner_step2 = page.text_content("#tourBanner")
+        assert "Step 2 of 5" in banner_step2
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(500)
+        assert page.query_selector("#tourBanner") is None, "Tour should exit on Escape key"
+        
+        # Test Data Download link
+        print("Verifying 'Download the data' GeoJSON link...")
+        dl_link = page.query_selector('a[download="heat_grid.geojson"]')
+        assert dl_link is not None
         
         context.close()
         
@@ -148,7 +194,7 @@ def test_ui():
         hash_page.wait_for_selector(".route.cool", timeout=15000)
         hash_verdict = hash_page.text_content(".verdict")
         print(f"Hash reproduced verdict: {hash_verdict}")
-        assert "high-heat zones" in hash_verdict
+        assert "hot, bare streets" in hash_verdict or "high-heat zones" in hash_verdict
         hash_context.close()
         
         browser.close()

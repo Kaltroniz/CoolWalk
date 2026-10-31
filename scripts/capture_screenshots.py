@@ -40,6 +40,19 @@ with sync_playwright() as p:
     print('Captured 03_phone_layout.png')
     mobile_page.close()
 
+    # 4. Cool-Refuge Finder & Places layer
+    refuge_page = browser.new_page(viewport={'width': 1280, 'height': 800})
+    refuge_page.goto(SITE_URL)
+    refuge_page.wait_for_selector('.route.cool', timeout=15000)
+    refuge_page.click('#places')
+    refuge_page.wait_for_timeout(1000)
+    refuge_page.click('#refugeBtn')
+    refuge_page.wait_for_selector('.refuge-card', timeout=12000)
+    refuge_page.wait_for_timeout(2000)
+    refuge_page.screenshot(path=str(OUT / '04_refuge_finder.png'))
+    print('Captured 04_refuge_finder.png')
+    refuge_page.close()
+
     browser.close()
 
 print('All screenshots captured successfully!')
