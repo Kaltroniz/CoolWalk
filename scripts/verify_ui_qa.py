@@ -41,7 +41,7 @@ def test_ui():
         assert "Independent check" in cool_caps, "Expected Independent check in CoolWalk card"
         
         # Verify Why helper text (B2)
-        why_text = page.text_content("#result > p.cap")
+        why_text = page.text_content("#result .cap")
         print(f"Why helper explanation: {why_text}")
         assert "cooler surface" in why_text or "greenery" in why_text or "avoiding" in why_text
         

@@ -2049,197 +2049,546 @@ if __name__ == "__main__":
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <style>
+/* ---------- design tokens & modern theme ---------- */
 :root{
-  --ink:#14222B; --ink2:#52626D; --panel:#F4F6F7; --line:#D8E0E4; --white:#fff;
-  --cool:#0E7C66; --cool-soft:#DDF1EB; --std:#3E4C56; --hot:#B5391C; --warn:#8A5A00;
+  --ink:#0F172A;
+  --ink2:#64748B;
+  --ink3:#94A3B8;
+  --panel:#F8FAFC;
+  --panel-card:#FFFFFF;
+  --line:#E2E8F0;
+  --line-strong:#CBD5E1;
+  --white:#FFFFFF;
+  --cool:#0E7C66;
+  --cool-dark:#095C4B;
+  --cool-soft:#EBF8F5;
+  --cool-border:rgba(14,124,102,.22);
+  --cool-glow:rgba(14,124,102,.12);
+  --std:#334155;
+  --std-soft:#F1F5F9;
+  --hot:#E11D48;
+  --hot-soft:#FFE4E6;
+  --warn:#D97706;
+  --warn-soft:#FEF3C7;
   --display:'Bricolage Grotesque','Segoe UI',system-ui,sans-serif;
   --body:'Instrument Sans','Segoe UI',system-ui,sans-serif;
+  --shadow-xs:0 1px 2px rgba(15,23,42,.04);
+  --shadow-sm:0 2px 6px rgba(15,23,42,.06);
+  --shadow-md:0 6px 20px rgba(15,23,42,.08);
+  --shadow-lg:0 14px 36px rgba(15,23,42,.12);
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:16px;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{font-family:var(--body);color:var(--ink);background:var(--panel);display:grid;grid-template-columns:400px 1fr;font-size:15px;line-height:1.45}
+body{
+  font-family:var(--body);
+  color:var(--ink);
+  background:var(--panel);
+  display:grid;
+  grid-template-columns:420px 1fr;
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
 button,input{font:inherit;color:inherit}
-:focus-visible{outline:3px solid #1B6FD6;outline-offset:2px}
+:focus-visible{outline:2.5px solid var(--cool);outline-offset:2px}
 #map{height:100dvh;width:100%}
-.panel{height:100dvh;overflow:auto;padding:16px 18px 20px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:12px}
-.grab{display:none;border:0;background:none;padding:6px;width:100%}
-.grab::after{content:"";display:block;width:44px;height:5px;margin:0 auto;border-radius:3px;background:#B9C4CA}
-h1{font:700 28px/1 var(--display);letter-spacing:-.02em;margin:0 0 4px}
-h2{font:600 12.5px/1.2 var(--body);color:var(--ink2);margin:0 0 6px;text-transform:uppercase;letter-spacing:.03em}
-.tag{margin:0;color:var(--ink2);font-size:13px;max-width:36ch}
-.finder{display:grid;gap:6px}
+
+/* ---------- sidebar panel ---------- */
+.panel{
+  height:100dvh;
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:16px 16px 20px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  background:var(--panel);
+  border-right:1px solid var(--line);
+  scrollbar-width:thin;
+  scrollbar-color:var(--line-strong) transparent;
+}
+.panel::-webkit-scrollbar{width:5px}
+.panel::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:4px}
+
+/* ---------- mobile grab bar ---------- */
+.grab{display:none;border:0;background:none;padding:8px;width:100%;cursor:pointer}
+.grab::after{content:"";display:block;width:40px;height:4.5px;margin:0 auto;border-radius:3px;background:var(--ink3)}
+
+/* ---------- header ---------- */
+.header{display:flex;flex-direction:column;gap:4px}
+.header-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.brand{display:flex;align-items:center;gap:7px}
+.brand-icon{
+  width:28px;height:28px;border-radius:8px;
+  background:var(--cool-soft);color:var(--cool);
+  display:grid;place-items:center;font-size:16px;
+  border:1px solid var(--cool-border);
+}
+h1{
+  font:700 24px/1 var(--display);
+  letter-spacing:-.025em;
+  margin:0;
+  color:var(--ink);
+}
+.tag{margin:0;color:var(--ink2);font-size:12.5px;line-height:1.4}
+
+/* ---------- tour pill button ---------- */
+.tour-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  background:var(--ink);color:var(--white);
+  border:0;border-radius:20px;padding:5px 11px;
+  font:600 11.5px var(--body);cursor:pointer;
+  white-space:nowrap;transition:all .15s ease;
+  box-shadow:var(--shadow-xs);
+}
+.tour-pill:hover{background:var(--cool);transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+.tour-pill svg{width:11px;height:11px;fill:currentColor}
+
+/* ---------- finder card ---------- */
+.finder-card{
+  background:var(--panel-card);
+  border:1px solid var(--line);
+  border-radius:var(--radius-md);
+  padding:10px;
+  box-shadow:var(--shadow-xs);
+  display:grid;
+  gap:7px;
+}
 .fieldwrap{position:relative}
-.field{display:flex;align-items:center;gap:8px;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:0 10px;height:38px}
-.field:focus-within{border-color:var(--cool);box-shadow:0 0 0 3px rgba(14,124,102,.18)}
-.field input{border:0;outline:0;flex:1;background:transparent;height:100%;min-width:0;font-size:14px}
-.pin{flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:600 11px var(--body);color:#fff;background:var(--std)}
+.field{
+  display:flex;align-items:center;gap:9px;
+  background:var(--panel);border:1.5px solid var(--line);border-radius:9px;
+  padding:0 10px;height:38px;
+  transition:border-color .15s,box-shadow .15s,background .15s;
+}
+.field:focus-within{
+  border-color:var(--cool);
+  background:var(--white);
+  box-shadow:0 0 0 3px var(--cool-glow);
+}
+.field input{border:0;outline:0;flex:1;background:transparent;height:100%;min-width:0;font-size:13.5px}
+.field input::placeholder{color:var(--ink3)}
+.pin{
+  flex:none;width:20px;height:20px;border-radius:50%;
+  display:grid;place-items:center;
+  font:700 10.5px var(--body);color:var(--white);background:var(--std);
+}
 .pin.b{background:var(--cool)}
-.sugg{list-style:none;margin:4px 0 0;padding:4px;position:absolute;left:0;right:0;z-index:20;background:var(--white);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 24px rgba(20,34,43,.14)}
+
+/* ---------- search dropdown ---------- */
+.sugg{
+  list-style:none;margin:4px 0 0;padding:5px;
+  position:absolute;left:0;right:0;z-index:25;
+  background:var(--white);border:1px solid var(--line);border-radius:10px;
+  box-shadow:var(--shadow-lg);
+}
 .sugg:empty{display:none}
-.sugg button{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
-.sugg button:hover,.sugg button:focus-visible{background:var(--cool-soft)}
-.sugg small{display:block;color:var(--ink2)}
-.row{display:flex;gap:6px}
-.ghost{background:none;border:1px solid var(--line);border-radius:8px;padding:5px 8px;cursor:pointer;color:var(--ink2);font-size:13px}
-.ghost:hover{border-color:var(--ink2)}
-.presets{display:flex;flex-wrap:wrap;gap:6px}
-.presets button{background:var(--white);border:1px solid var(--line);border-radius:14px;padding:4px 10px;font-size:12.5px;cursor:pointer;white-space:nowrap;transition:border-color .15s,background .15s}
-.presets button:hover{border-color:var(--cool);background:var(--cool-soft);color:var(--cool)}
-.presets span{color:var(--ink2)}
-.tradeoff input{width:100%;accent-color:var(--cool)}
-.ends{display:flex;justify-content:space-between;color:var(--ink2);font-size:13px}
-#result{min-height:96px}
-.empty{color:var(--ink2);margin:0}
-.verdict{font:600 21px/1.25 var(--display);margin:0 0 4px;letter-spacing:-.01em}
-.route{border-left:4px solid var(--std);padding:2px 0 2px 12px;margin:0 0 14px}
-.route.cool{border-left-color:var(--cool)}
-.route h3{margin:0;font:600 14px var(--body);color:var(--ink2)}
-.big{font:700 30px/1.1 var(--display);margin:2px 0}
+.sugg button{
+  display:block;width:100%;text-align:left;
+  background:none;border:0;padding:7px 9px;border-radius:6px;cursor:pointer;
+  transition:background .12s;
+}
+.sugg button:hover,.sugg button:focus-visible{background:var(--cool-soft);color:var(--cool-dark)}
+.sugg small{display:block;color:var(--ink2);font-size:11.5px;margin-top:2px}
+
+/* ---------- action bar ---------- */
+.actions{display:flex;gap:5px;flex-wrap:wrap}
+.ghost{
+  background:var(--white);border:1px solid var(--line);border-radius:7px;
+  padding:5px 9px;cursor:pointer;color:var(--ink2);font-size:12px;font-weight:500;
+  transition:all .15s;white-space:nowrap;
+}
+.ghost:hover{border-color:var(--line-strong);color:var(--ink);background:var(--panel)}
+.ghost.accent{border-color:var(--cool-border);background:var(--cool-soft);color:var(--cool);font-weight:600}
+.ghost.accent:hover{background:#ddf3ec;border-color:var(--cool)}
+
+/* ---------- presets row ---------- */
+.presets-section{display:flex;flex-direction:column;gap:5px}
+.section-title{
+  font:600 11px/1.2 var(--body);
+  text-transform:uppercase;letter-spacing:.04em;
+  color:var(--ink2);
+}
+.presets-pills{display:flex;flex-wrap:wrap;gap:6px}
+.preset-chip{
+  background:var(--white);border:1px solid var(--line);border-radius:16px;
+  padding:4px 10px;font-size:12px;font-weight:500;cursor:pointer;
+  white-space:nowrap;transition:all .15s;color:var(--ink);
+  box-shadow:var(--shadow-xs);
+}
+.preset-chip:hover{border-color:var(--cool);color:var(--cool);background:var(--cool-soft)}
+.preset-chip span{color:var(--ink2);font-weight:400}
+
+/* ---------- verdict banner card ---------- */
+.verdict-card{
+  background:linear-gradient(135deg,var(--cool-soft) 0%,#F4FBF9 100%);
+  border:1.5px solid var(--cool-border);
+  border-radius:var(--radius-md);
+  padding:12px 14px;
+  box-shadow:var(--shadow-xs);
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.verdict-tag{
+  font:700 9.5px/1 var(--body);
+  color:var(--cool);text-transform:uppercase;letter-spacing:.06em;
+  display:flex;align-items:center;gap:4px;
+}
+.verdict{
+  font:700 18px/1.22 var(--display);
+  letter-spacing:-.02em;margin:0;color:var(--ink);
+}
+.verdict-why{
+  margin:0;color:var(--ink2);font-size:12.5px;line-height:1.4;
+}
+
+/* ---------- route comparison cards ---------- */
+.routes-container{
+  display:flex;
+  flex-direction:column;
+  gap:9px;
+}
+.route{
+  background:var(--white);
+  border:1.5px solid var(--line);
+  border-radius:var(--radius-md);
+  padding:12px 14px;
+  box-shadow:var(--shadow-xs);
+  transition:transform .12s,box-shadow .15s,border-color .15s;
+  display:flex;flex-direction:column;gap:6px;
+}
+.route:hover{box-shadow:var(--shadow-sm)}
+.route.cool{
+  background:linear-gradient(180deg,#FFFFFF 0%,var(--cool-soft) 100%);
+  border-color:rgba(14,124,102,.35);
+}
+.route-header{
+  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+}
+.route-title-wrap{
+  display:flex;align-items:center;gap:7px;
+}
+.route-title{
+  font:700 14px/1 var(--body);color:var(--ink);
+}
+.route.cool .route-title{color:var(--cool)}
+.route-stats{
+  display:flex;align-items:baseline;gap:5px;
+}
+.big{
+  font:700 24px/1 var(--display);
+  letter-spacing:-.02em;
+  color:var(--ink);
+}
 .route.cool .big{color:var(--cool)}
-.big small{font:500 14px var(--body);color:var(--ink2);margin-left:6px}
-.strip{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:8px 0 4px;background:#C9D1D6}
-.strip i{flex:1}
-.cap{margin:0 0 10px;color:var(--ink2);font-size:13px}
-.note{background:#FFF4DB;color:var(--warn);border-radius:8px;padding:8px 10px;font-size:13px;margin:0 0 12px}
-.err{background:#FDE8E4;color:#8C2412;border-radius:8px;padding:10px 12px;margin:0}
-.busy{height:3px;background:linear-gradient(90deg,var(--cool) 30%,transparent 30%) 0 0/200% 100%;animation:sweep 1s linear infinite;border-radius:2px;margin-bottom:10px}
+.big small{
+  font:500 12.5px var(--body);
+  color:var(--ink2);
+  margin-left:4px;
+  letter-spacing:0;
+}
+.strip{
+  display:flex;height:9px;border-radius:5px;
+  overflow:hidden;background:#E2E8F0;cursor:crosshair;
+}
+.strip i{flex:1;transition:opacity .1s}
+.strip i:hover{opacity:.8}
+.route-meta{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:6px;font-size:12px;color:var(--ink2);
+}
+.cap{margin:0;color:var(--ink2);font-size:12px;line-height:1.35}
+
+/* ---------- validation badge ---------- */
+.val-check{
+  display:inline-flex;align-items:center;gap:4px;
+  color:var(--cool);font:600 11px/1.2 var(--body);
+  background:rgba(14,124,102,.08);padding:3px 7px;border-radius:5px;
+  align-self:flex-start;
+}
+.val-check svg{width:12px;height:12px;fill:currentColor}
+
+/* ---------- risk badges ---------- */
+.risk-badge{
+  display:inline-flex;align-items:center;gap:3px;
+  font:700 9.5px/1 var(--body);text-transform:uppercase;letter-spacing:.04em;
+  padding:2.5px 6px;border-radius:4px;vertical-align:middle;
+}
+.risk-hot{background:var(--hot-soft);color:var(--hot)}
+.risk-mod{background:var(--warn-soft);color:var(--warn)}
+.risk-low{background:var(--cool-soft);color:var(--cool)}
+
+/* ---------- feedback messages ---------- */
+.note{
+  background:var(--warn-soft);color:var(--warn);
+  border-radius:var(--radius-sm);padding:8px 11px;font-size:12px;
+  margin:0;border:1px solid rgba(217,119,6,.18);
+}
+.err{
+  background:var(--hot-soft);color:var(--hot);
+  border-radius:var(--radius-sm);padding:9px 12px;font-size:12.5px;
+  margin:0;border:1px solid rgba(225,29,72,.18);
+}
+.busy{
+  height:3px;background:linear-gradient(90deg,var(--cool) 30%,transparent 30%) 0 0/200% 100%;
+  animation:sweep 1s linear infinite;border-radius:2px;margin:2px 0 8px;
+}
 @keyframes sweep{to{background-position:-200% 0}}
 @media (prefers-reduced-motion:reduce){.busy{animation:none;background:var(--cool)}}
-.legend{height:10px;border-radius:5px;background:linear-gradient(90deg,#58B8A8,#EBD77F,#F2A25C,#D9532C,#9B1C1C);margin:8px 0 4px}
-.layers label{display:flex;gap:8px;align-items:center;cursor:pointer}
-details summary{cursor:pointer;font-weight:600}
-details ol{margin:8px 0 0;padding-left:20px}
-details li{margin:3px 0}
-.link-btn{background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px;font:inherit;display:inline-flex;align-items:baseline;gap:6px}
+
+/* ---------- accordion tools & civic view ---------- */
+.accordions-container{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  margin-top:2px;
+}
+.accordion{
+  background:var(--white);
+  border:1px solid var(--line);
+  border-radius:var(--radius-md);
+  overflow:hidden;
+  transition:border-color .15s,box-shadow .15s;
+  box-shadow:var(--shadow-xs);
+}
+.accordion[open]{
+  border-color:var(--line-strong);
+  box-shadow:var(--shadow-sm);
+}
+.accordion summary{
+  list-style:none;
+  padding:10px 14px;
+  font:600 12.5px/1.2 var(--body);
+  color:var(--ink);
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  user-select:none;
+  background:var(--white);
+  transition:background .12s;
+}
+.accordion summary::-webkit-details-marker{display:none}
+.accordion summary:hover{background:var(--panel)}
+.accordion summary::after{
+  content:"›";font-size:16px;color:var(--ink2);
+  transition:transform .2s ease;font-weight:600;
+}
+.accordion[open] summary::after{transform:rotate(90deg);color:var(--cool)}
+.accordion-content{
+  padding:8px 14px 14px;
+  border-top:1px solid var(--line);
+  background:var(--panel);
+  font-size:12.5px;color:var(--ink2);line-height:1.45;
+  display:grid;gap:8px;
+}
+
+/* ---------- slider & layer controls ---------- */
+.slider-wrap{display:grid;gap:4px}
+.slider-wrap input[type="range"]{width:100%;accent-color:var(--cool);margin:2px 0}
+.ends{display:flex;justify-content:space-between;color:var(--ink2);font-size:11.5px}
+.legend{height:8px;border-radius:4px;background:linear-gradient(90deg,#58B8A8,#EBD77F,#F2A25C,#D9532C,#9B1C1C);margin:3px 0}
+.layer-checkbox{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12.5px;color:var(--ink)}
+
+/* ---------- civic priority table ---------- */
+.table-wrap{
+  max-height:190px;overflow:auto;
+  border:1px solid var(--line);border-radius:var(--radius-sm);
+  background:var(--white);
+}
+.priority-table{width:100%;border-collapse:collapse;font-size:11.5px;text-align:left}
+.priority-table thead{background:var(--panel);position:sticky;top:0;z-index:2}
+.priority-table th{padding:6px 8px;border-bottom:1px solid var(--line);font-weight:600;color:var(--ink2)}
+.priority-table td{padding:5px 8px;border-bottom:1px solid var(--line)}
+.priority-table tr:hover{background:var(--cool-soft);cursor:pointer}
+
+/* ---------- findings lists ---------- */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cols h2{font:600 11px/1 var(--body);color:var(--ink2);text-transform:uppercase;letter-spacing:.03em;margin:0 0 5px}
+.cols ol{margin:0;padding-left:16px;font-size:12px}
+.cols li{margin:2px 0}
+.link-btn{
+  background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;
+  color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-strong);
+  text-underline-offset:3px;font:inherit;display:inline-flex;align-items:baseline;gap:4px;
+}
 .link-btn:hover,.link-btn:focus-visible{color:var(--cool);text-decoration-color:var(--cool)}
 .link-btn small{color:var(--ink2);text-decoration:none}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.foot{color:var(--ink2);font-size:12.5px;margin-top:auto}
-.mk{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font:600 13px var(--body);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:grab;background:var(--std)}
-.mk.b{background:var(--cool)}
-.tour-banner{position:fixed;top:18px;left:420px;right:20px;max-width:540px;margin:0 auto;z-index:30;background:rgba(20,34,43,.94);color:#fff;backdrop-filter:blur(10px);padding:16px 18px;border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.35);display:grid;gap:8px;animation:slideDown .25s ease}
-@keyframes slideDown{from{transform:translateY(-10px);opacity:0}to{transform:translateY(0);opacity:1}}
-.tour-step-tag{font:600 11.5px var(--body);color:#58B8A8;text-transform:uppercase;letter-spacing:.06em}
-.tour-title{font:700 16.5px/1.2 var(--display);margin:0}
-.tour-text{font:400 13.5px/1.4 var(--body);margin:0;color:#D8E0E4}
-.tour-controls{display:flex;justify-content:space-between;align-items:center;margin-top:4px}
-.tour-btn{background:rgba(255,255,255,.14);border:0;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font:500 12.5px var(--body)}
-.tour-btn:hover{background:rgba(255,255,255,.24)}
-.tour-btn.primary{background:#0E7C66;color:#fff;font-weight:600}
-.tour-btn.primary:hover{background:#11987d}
-.refuge-card{background:var(--white);border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;display:grid;gap:6px}
-.refuge-card h4{margin:0;font:600 14px var(--body);display:flex;align-items:center;gap:6px}
-.refuge-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;color:var(--ink2);margin:4px 0}
+
+/* ---------- refuge cards ---------- */
+.refuge-card{
+  background:var(--white);border:1px solid var(--line);
+  border-radius:var(--radius-sm);padding:10px 12px;display:grid;gap:5px;
+}
+.refuge-card h4{margin:0;font:600 13px var(--body);display:flex;align-items:center;gap:6px}
+.refuge-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;color:var(--ink2)}
 .refuge-grid strong{color:var(--ink)}
-.risk-badge{display:inline-block;font:600 11px/1.2 var(--body);text-transform:uppercase;letter-spacing:.04em;padding:3px 7px;border-radius:4px;margin-left:8px;vertical-align:middle}
-.risk-hot{background:#FDE8E4;color:#B5391C}
-.risk-mod{background:#FFF4DB;color:#8A5A00}
-.risk-low{background:#DDF1EB;color:#0E7C66}
+
+/* ---------- markers ---------- */
+.mk{
+  width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+  color:#fff;font:700 12px var(--body);border:2.5px solid #fff;
+  box-shadow:var(--shadow-sm);cursor:grab;background:var(--std);
+}
+.mk.b{background:var(--cool)}
+
+/* ---------- tour banner overlay ---------- */
+.tour-banner{
+  position:fixed;top:16px;left:440px;right:20px;max-width:500px;margin:0 auto;z-index:30;
+  background:rgba(15,23,42,.95);color:#fff;backdrop-filter:blur(14px);
+  padding:16px 18px;border-radius:var(--radius-md);box-shadow:var(--shadow-lg);
+  display:grid;gap:7px;animation:slideDown .22s ease;
+  border:1px solid rgba(255,255,255,.1);
+}
+@keyframes slideDown{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
+.tour-step-tag{font:700 10.5px var(--body);color:#58B8A8;text-transform:uppercase;letter-spacing:.06em}
+.tour-title{font:700 16px/1.25 var(--display);margin:0}
+.tour-text{font:400 13px/1.4 var(--body);margin:0;color:#CBD5E1}
+.tour-controls{display:flex;justify-content:space-between;align-items:center;margin-top:4px}
+.tour-btn{background:rgba(255,255,255,.14);border:0;color:#fff;padding:5px 11px;border-radius:6px;cursor:pointer;font:500 12px var(--body)}
+.tour-btn:hover{background:rgba(255,255,255,.24)}
+.tour-btn.primary{background:var(--cool);color:#fff;font-weight:600}
+.tour-btn.primary:hover{background:#11987d}
+
+/* ---------- footer ---------- */
+.foot{color:var(--ink3);font-size:11.5px;margin-top:auto;padding-top:10px;line-height:1.4}
+.foot a{color:var(--cool);text-decoration:none}
+.foot a:hover{text-decoration:underline}
+
+/* ---------- mobile drawer responsiveness ---------- */
 @media (max-width:820px){
   body{grid-template-columns:1fr}
   #map{position:fixed;inset:0}
-  .panel{position:fixed;left:0;right:0;bottom:0;height:auto;max-height:54dvh;z-index:5;border:0;border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(20,34,43,.2);padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px));gap:14px}
+  .panel{
+    position:fixed;left:0;right:0;bottom:0;
+    height:auto;max-height:58dvh;
+    z-index:5;border:0;
+    border-radius:20px 20px 0 0;
+    box-shadow:0 -10px 32px rgba(15,23,42,.18);
+    padding:12px 16px calc(18px + env(safe-area-inset-bottom,0px));
+    gap:10px;
+  }
   .grab{display:block}
-  .panel.collapsed{max-height:132px;overflow:hidden}
-  h1{font-size:24px}
+  .panel.collapsed{max-height:130px;overflow:hidden}
+  h1{font-size:21px}
   .tag{display:none}
-  .tour-banner{left:16px;right:16px;top:16px;max-width:none}
+  .tour-banner{left:14px;right:14px;top:14px;max-width:none}
 }
 </style>
 </head>
 <body>
 <aside class="panel" id="panel">
   <button class="grab" id="grab" type="button" aria-label="Expand or collapse panel" aria-expanded="true"></button>
-  <header>
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-      <h1>CoolWalk</h1>
-      <button id="tourBtn" type="button" class="ghost" style="border-color:var(--cool);color:var(--cool);font-weight:600;padding:4px 10px;font-size:13px;white-space:nowrap" title="Take a 40-second guided tour of CoolWalk">▶ 40-sec tour</button>
+
+  <!-- ===== 1. HEADER ===== -->
+  <header class="header">
+    <div class="header-top">
+      <div class="brand">
+        <div class="brand-icon">🌿</div>
+        <h1>CoolWalk</h1>
+      </div>
+      <button id="tourBtn" type="button" class="tour-pill" title="Take a 40-second guided tour of CoolWalk">
+        <svg viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>
+        40s Tour
+      </button>
     </div>
-    <p class="tag">Walking routes that give up a few minutes for far less time in the heat. Central Delhi, pre-monsoon 2026.</p>
+    <p class="tag">Walking routes that trade a few minutes for far less time in extreme heat. Central Delhi, pre-monsoon 2026.</p>
   </header>
 
-  <section class="finder" aria-label="Choose your walk">
+  <!-- ===== 2. SEARCH & ACTIONS ===== -->
+  <section class="finder-card" aria-label="Choose your walk">
     <div class="fieldwrap">
-      <label class="field"><span class="pin">A</span><input id="from" type="search" placeholder="Start: a place or click the map" autocomplete="off" aria-label="Start"></label>
+      <label class="field"><span class="pin">A</span><input id="from" type="search" placeholder="Start: search place or click map" autocomplete="off" aria-label="Start"></label>
       <ul class="sugg" id="suggFrom"></ul>
     </div>
     <div class="fieldwrap">
-      <label class="field"><span class="pin b">B</span><input id="to" type="search" placeholder="End: a place or click the map" autocomplete="off" aria-label="End"></label>
+      <label class="field"><span class="pin b">B</span><input id="to" type="search" placeholder="End: search place or click map" autocomplete="off" aria-label="End"></label>
       <ul class="sugg" id="suggTo"></ul>
     </div>
-    <div class="row" style="flex-wrap:wrap">
-      <button class="ghost" id="swap" type="button">Swap A and B</button>
-      <button class="ghost" id="clear" type="button">Clear</button>
-      <button class="ghost" id="share" type="button">Copy link</button>
-      <button class="ghost" id="refugeBtn" type="button" style="border-color:var(--cool);color:var(--cool);font-weight:600">💧 Where can I cool down?</button>
+    <div class="actions">
+      <button class="ghost" id="swap" type="button" title="Swap start and destination">Swap A↔B</button>
+      <button class="ghost" id="clear" type="button" title="Clear route and markers">Clear</button>
+      <button class="ghost" id="share" type="button" title="Copy shareable link to this walk">Copy link</button>
+      <button class="ghost accent" id="refugeBtn" type="button" title="Find nearest parks, metro stations or water">💧 Where can I cool down?</button>
     </div>
   </section>
 
-  <section aria-label="Example walks">
-    <h2>Try a walk</h2>
-    <div class="presets" id="presets"></div>
+  <!-- ===== 3. PRESETS ===== -->
+  <section class="presets-section" aria-label="Preset walking routes">
+    <div class="section-title">Try a walk</div>
+    <div class="presets-pills" id="presets"></div>
   </section>
 
+  <!-- ===== 4. ROUTE COMPARISON (HERO RESULT) ===== -->
   <section id="result" aria-live="polite">
-    <p class="empty">Click two points on the map, search for a place, or try one of the walks above.</p>
+    <p class="empty" style="color:var(--ink2)">Click two points on the map, search for a place, or choose a walk above.</p>
   </section>
 
-  <section class="tradeoff">
-    <h2><label for="alpha">How much to avoid heat</label></h2>
-    <input id="alpha" type="range" min="0" max="6" step="0.5" value="3">
-    <div class="ends"><span>Fastest</span><span>Coolest</span></div>
-  </section>
-
-  <section class="layers">
-    <label><input type="checkbox" id="heat" checked> Show how hot each area runs</label>
-    <div class="legend" aria-hidden="true"></div>
-    <div class="ends" id="legendEnds"><span>Cooler</span><span>Hotter</span></div>
-    <label style="margin-top:10px"><input type="checkbox" id="places"> Show places in the heat (parks, metro, water)</label>
-  </section>
-
-  <details id="plannerView">
-    <summary>Where shade matters most (Civic Planner View)</summary>
-    <div style="margin-top:8px" class="cap">
-      <p style="margin:0 0 8px">Amazon Athena analyzed 35,748 street segments intersecting civic facilities. These high-heat corridors (heat index &ge; 0.66) sit directly adjacent to schools, clinics, and bus stops where pedestrians face dangerous exposure.</p>
-      <div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--white)">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left">
-          <thead style="background:var(--panel);position:sticky;top:0">
-            <tr>
-              <th style="padding:6px 8px;border-bottom:1px solid var(--line)">Corridor</th>
-              <th style="padding:6px 4px;border-bottom:1px solid var(--line)">Surface</th>
-              <th style="padding:6px 4px;border-bottom:1px solid var(--line)">Hot (m)</th>
-              <th style="padding:6px 4px;border-bottom:1px solid var(--line);text-align:center">Civic</th>
-            </tr>
-          </thead>
-          <tbody id="shadePriorityRows"></tbody>
-        </table>
+  <!-- ===== 5. COLLAPSIBLE CIVIC, SETTINGS & STORY ACCORDIONS ===== -->
+  <div class="accordions-container">
+    <details class="accordion" id="settingsAccordion" open>
+      <summary>⚙ Heat Sensitivity & Map Layers</summary>
+      <div class="accordion-content">
+        <div class="slider-wrap">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <label for="alpha" style="font-weight:600;color:var(--ink);font-size:12px">Heat avoidance tradeoff</label>
+          </div>
+          <input id="alpha" type="range" min="0" max="6" step="0.5" value="3" aria-label="Heat avoidance sensitivity">
+          <div class="ends"><span>Fastest walk</span><span>Coolest route</span></div>
+        </div>
+        <div style="height:1px;background:var(--line);margin:3px 0"></div>
+        <label class="layer-checkbox"><input type="checkbox" id="heat" checked> Show satellite surface heat map</label>
+        <div class="legend" aria-hidden="true"></div>
+        <div class="ends" id="legendEnds"><span>Cooler</span><span>Hotter</span></div>
+        <label class="layer-checkbox" style="margin-top:4px"><input type="checkbox" id="places"> Show places in the heat (parks, metro, water)</label>
       </div>
-      <div style="margin-top:8px">
-        <a href="data/shade_priority.csv" download="shade_priority.csv" class="ghost" style="display:inline-block;text-decoration:none;font-weight:600;font-size:12.5px;padding:5px 9px">📥 Download Shade Priority Data (CSV)</a>
+    </details>
+
+    <details class="accordion" id="plannerView">
+      <summary>🏛 Shade Priority Corridors (Civic Planner)</summary>
+      <div class="accordion-content">
+        <p style="margin:0">Corridors identified via Amazon Athena intersecting schools, healthcare clinics, and bus stops where shade infrastructure reduces high heat exposure most urgently.</p>
+        <div class="table-wrap">
+          <table class="priority-table">
+            <thead><tr><th>Corridor</th><th>Surface</th><th>Hot (m)</th><th style="text-align:center">Civic Facilities</th></tr></thead>
+            <tbody id="shadePriorityRows"></tbody>
+          </table>
+        </div>
+        <div>
+          <a href="data/shade_priority.csv" download="shade_priority.csv" class="ghost" style="display:inline-block;text-decoration:none;font-weight:600;font-size:11.5px;padding:5px 9px">📥 Download Shade Priority Data (CSV)</a>
+        </div>
       </div>
-    </div>
-  </details>
+    </details>
 
-  <details id="findings" hidden>
-    <summary>What the data shows</summary>
-    <p class="cap" id="findLead" style="margin-top:8px"></p>
-    <p class="cap" id="placeLead" style="margin:4px 0 8px;font-weight:500;color:var(--ink)"></p>
-    <div class="cols"><div><h2>Hottest streets</h2><ol id="hotList"></ol></div><div><h2>Coolest streets</h2><ol id="coolList"></ol></div></div>
-  </details>
+    <details class="accordion" id="findings" hidden>
+      <summary>📊 What the Data Shows</summary>
+      <div class="accordion-content">
+        <p id="findLead" style="margin:0"></p>
+        <p id="placeLead" style="margin:0;font-weight:600;color:var(--ink)"></p>
+        <div class="cols">
+          <div><h2>Hottest streets</h2><ol id="hotList"></ol></div>
+          <div><h2>Coolest streets</h2><ol id="coolList"></ol></div>
+        </div>
+      </div>
+    </details>
 
-  <details id="howItWorks">
-    <summary>How it works, and the limits</summary>
-    <div style="margin-top:8px;display:grid;gap:8px" class="cap">
-      <p><strong>Where the data comes from:</strong> Surface temperature from USGS Landsat 8 (June 2026), vegetation index from Copernicus Sentinel-2 (June 2026), and walkable street geometry from OpenStreetMap.</p>
-      <p><strong>How routes are found:</strong> Street segments hold a heat cost based on high surface temperature and lack of greenery. An A* router searches for the coolest path, capped at a sensible detour above the direct route.</p>
-      <p><strong>The limits:</strong> Satellite observations capture surface temperature on clear summer mornings, not ambient air temperature or transient humidity. Shading from trees and awnings is reflected in vegetation and temperature proxies, but tall building shadows vary by time of day. Walking pace is assumed at 1.35 m/s.</p>
-    </div>
-  </details>
+    <details class="accordion" id="howItWorks">
+      <summary>ℹ How It Works & Scientific Limits</summary>
+      <div class="accordion-content">
+        <p><strong>Data sources:</strong> Surface temperature from USGS Landsat 8 (June 2026), vegetation index from Copernicus Sentinel-2 (June 2026), and pedestrian network from OpenStreetMap.</p>
+        <p><strong>Routing algorithm:</strong> Street segments carry a heat cost weighted by high surface temperatures and low greenery. An A* router searches for the coolest path within a bounded detour cap.</p>
+        <p><strong>Limits:</strong> Satellites measure radiative skin temperature on clear summer mornings, not ambient 2m air temperature or transient humidity. Tree canopy is captured via NDVI, while building shadows vary by hour. Walking pace: 1.35 m/s.</p>
+      </div>
+    </details>
+  </div>
 
-  <p class="foot" id="foot">Heat comes from satellite surface temperature and vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson" style="color:var(--cool)">Download the data</a> (GeoJSON).</p>
+  <!-- ===== 6. FOOTER ===== -->
+  <p class="foot" id="foot">Heat is estimated from Landsat surface temperature and Sentinel-2 vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson">Download the data</a> (GeoJSON).</p>
 </aside>
 <div id="map" role="application" aria-label="Map of central Delhi"></div>
 
@@ -2291,7 +2640,7 @@ map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-right
 map.addControl(new maplibregl.AttributionControl({compact:true, customAttribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Landsat 8/9 &copy; USGS/NASA | Sentinel-2 &copy; Copernicus'}), 'bottom-right');
 
 const pad = () => matchMedia('(max-width:820px)').matches
-  ? {top:40, left:20, right:20, bottom:Math.round(innerHeight*.56)} : {top:60, bottom:60, right:60, left:440};
+  ? {top:40, left:20, right:20, bottom:Math.round(innerHeight*.58)} : {top:60, bottom:60, right:60, left:460};
 map.fitBounds([[C.bbox[0],C.bbox[1]],[C.bbox[2],C.bbox[3]]], {padding: pad(), duration: 0});
 const emptyLine = {type:'Feature', geometry:{type:'LineString', coordinates:[]}};
 
@@ -2304,7 +2653,7 @@ map.on('load', async () => {
     map.addLayer({id:'heat', type:'fill', source:'heat', paint:{
       'fill-color':['interpolate',['linear'],['get','hs'], ...RAMP.flat()],
       'fill-opacity':['interpolate',['linear'],['get','hs'], 0,.1, 1,.55]}}, firstLabel && firstLabel.id);
-  } catch (e) { console.warn('Heat layer unavailable', e); $('#heat').closest('section').hidden = true; }
+  } catch (e) { console.warn('Heat layer unavailable', e); $('#heat').closest('label').hidden = true; }
   for (const [id, color, width, dash] of [['std','#3E4C56',4,[2,1.6]], ['cool','#0E7C66',7,null]]){
     map.addSource('r-'+id, {type:'geojson', data: emptyLine});
     map.addLayer({id:'r-'+id+'-case', type:'line', source:'r-'+id, layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':'#fff','line-width':width+4}});
@@ -2363,9 +2712,9 @@ $('#clear').onclick = () => {
   for (const k of ['a','b']){ state[k] = null; if (state.mk[k]) { state.mk[k].remove(); delete state.mk[k]; } }
   $('#from').value = $('#to').value = '';
   for (const id of ['std','cool']) if (map.getSource('r-'+id)) map.getSource('r-'+id).setData(emptyLine);
-  $('#result').innerHTML = '<p class="empty">Click two points on the map, search for a place, or try one of the walks above.</p>';
+  $('#result').innerHTML = '<p class="empty" style="color:var(--ink2)">Click two points on the map, search for a place, or choose a walk above.</p>';
 };
-$('#presets').innerHTML = PRESETS.map((p,i) => `<button type="button" data-i="${i}">${esc(p.label)} <span>to ${esc(p.to)}</span></button>`).join('');
+$('#presets').innerHTML = PRESETS.map((p,i) => `<button type="button" class="preset-chip" data-i="${i}">${esc(p.label)} <span>→ ${esc(p.to)}</span></button>`).join('');
 $('#presets').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   const p = PRESETS[+b.dataset.i]; setPoint('a', p.a, p.label); setPoint('b', p.b, p.to); plan();
@@ -2471,9 +2820,9 @@ function show(r, aws){
     const diff = (std.val_lst_c[0] - cool.val_lst_c[0]).toFixed(1);
     const vDate = state.valDate || 'held-out scene';
     if (+diff > 0) {
-      valCheckHtml = `<p class="cap" style="color:var(--cool);font-weight:600;margin:6px 0 0">✓ Independent check (${vDate}): ${diff} °C cooler</p>`;
+      valCheckHtml = `<div class="val-check"><svg viewBox="0 0 16 16"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 5.22a.75.75 0 00-1.06 0L7 8.94 5.28 7.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"/></svg> Independent check (${esc(vDate)}): ${diff} °C cooler</div>`;
     } else if (+diff === 0) {
-      valCheckHtml = `<p class="cap" style="color:var(--ink2);margin:6px 0 0">Independent check (${vDate}): equal surface temp</p>`;
+      valCheckHtml = `<div class="val-check" style="color:var(--ink2)">Independent check (${esc(vDate)}): equal surface temp</div>`;
     }
   }
   const notes = [];
@@ -2483,17 +2832,49 @@ function show(r, aws){
     : ((std.hot_share || 0) >= 0.25 ? '<span class="risk-badge risk-mod">Moderate-heat walk</span>' : '<span class="risk-badge risk-low">Low-heat walk</span>');
   const coolBadge = (cool.hot_share || 0) >= 0.50 ? '<span class="risk-badge risk-hot">High-heat walk</span>'
     : ((cool.hot_share || 0) >= 0.25 ? '<span class="risk-badge risk-mod">Moderate-heat walk</span>' : '<span class="risk-badge risk-low">Low-heat walk</span>');
+  
   $('#result').innerHTML = `
-    <p class="verdict">${esc(verdict)}</p>
-    <p class="cap">${esc(why(cool, std))}</p>
+    <div class="verdict-card">
+      <div class="verdict-tag">RECOMMENDED COOL ROUTE</div>
+      <p class="verdict">${esc(verdict)}</p>
+      <p class="cap verdict-why">${esc(why(cool, std))}</p>
+    </div>
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
-    <div class="route cool"><h3>CoolWalk ${coolBadge}</h3>
-      <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(cool.profile, 'cool')}<p class="cap">${pct(cool.hot_share)}% in high-heat zones (about ${coolHotMin} min)${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</p>
-      ${valCheckHtml}</div>
-    <div class="route"><h3>${esc(stdLabel)} ${stdBadge}</h3>
-      <div class="big">${Math.round(std.minutes)} min<small>${(std.length_m/1000).toFixed(1)} km</small></div>
-      ${strip(std.profile, 'std')}<p class="cap">${pct(std.hot_share)}% in high-heat zones (about ${stdHotMin} min)${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</p></div>`;
+    <div class="routes-container">
+      <div class="route cool">
+        <div class="route-header">
+          <div class="route-title-wrap">
+            <span class="route-title">CoolWalk</span>
+            ${coolBadge}
+          </div>
+          <div class="route-stats">
+            <span class="big">${Math.round(cool.minutes)}<small>min · ${(cool.length_m/1000).toFixed(1)} km</small></span>
+          </div>
+        </div>
+        ${strip(cool.profile, 'cool')}
+        <div class="route-meta">
+          <span class="cap">${pct(cool.hot_share)}% in high-heat zones (about ${coolHotMin} min)${cool.mean_lst_c != null ? ` · avg surface ${cool.mean_lst_c}°C` : ''}</span>
+        </div>
+        ${valCheckHtml}
+      </div>
+
+      <div class="route std">
+        <div class="route-header">
+          <div class="route-title-wrap">
+            <span class="route-title">${esc(stdLabel)}</span>
+            ${stdBadge}
+          </div>
+          <div class="route-stats">
+            <span class="big">${Math.round(std.minutes)}<small>min · ${(std.length_m/1000).toFixed(1)} km</small></span>
+          </div>
+        </div>
+        ${strip(std.profile, 'std')}
+        <div class="route-meta">
+          <span class="cap">${pct(std.hot_share)}% in high-heat zones (about ${stdHotMin} min)${std.mean_lst_c != null ? ` · avg surface ${std.mean_lst_c}°C` : ''}</span>
+        </div>
+      </div>
+    </div>`;
+
   state.lastRoutes = {
     cool: { line: cool.line, length_m: cool.length_m },
     std: { line: usable ? aws.line : r.shortest.line, length_m: std.length_m }
@@ -2575,7 +2956,7 @@ const KIND_ICONS = {park:'🌳', water:'💧', metro:'🚇', hospital:'🏥', sc
 
 $('#refugeBtn').onclick = async () => {
   if (!state.a) {
-    $('#result').innerHTML = '<div class="note" style="background:var(--cool-soft);color:var(--cool);border-color:var(--cool);padding:10px">Pick a starting point (Pin A) on the map or search above, then click <strong>Where can I cool down?</strong> to find nearby shaded parks, water points, or metro stations.</div>';
+    $('#result').innerHTML = '<div class="note" style="background:var(--cool-soft);color:var(--cool);border-color:var(--cool-border);padding:10px">Pick a starting point (Pin A) on the map or search above, then click <strong>Where can I cool down?</strong> to find nearby shaded parks, water points, or metro stations.</div>';
     return;
   }
   busy();
@@ -2591,10 +2972,10 @@ function showRefuges(res){
   clearTimeout(warmTimer);
   const opts = (res && res.options) || [];
   if (!opts.length) {
-    $('#result').innerHTML = '<p class="empty">No cool refuges found within a 20-minute walk from here.</p>';
+    $('#result').innerHTML = '<p class="empty" style="color:var(--ink2)">No cool refuges found within a 20-minute walk from here.</p>';
     return;
   }
-  let html = `<p class="verdict" style="font-size:18px">Nearest Cool Refuges</p><p class="cap">Shelter reachable along the coolest walking path from Pin A:</p>`;
+  let html = `<div class="verdict-card"><div class="verdict-tag">EMERGENCY HEAT RELIEF</div><p class="verdict" style="font-size:17px">Nearest Cool Refuges</p><p class="cap verdict-why">Shelter reachable along the coolest walking path from Pin A:</p></div>`;
   opts.forEach((o, idx) => {
     const icon = KIND_ICONS[o.kind] || '📍';
     const c = o.cool || o.fastest;
@@ -2611,7 +2992,7 @@ function showRefuges(res){
           <div><strong>Cool walk:</strong> ${cMin} min (${cKm} km)<br><small style="color:var(--cool)">Avg surface: ${cLST}</small></div>
           <div><strong>Fastest walk:</strong> ${fMin} min<br><small>Direct rush</small></div>
         </div>
-        <button type="button" class="ghost" data-refuge-idx="${idx}" style="border-color:var(--cool);color:var(--cool);font-weight:600;padding:5px 8px;font-size:12.5px;margin-top:4px">Show cool walk</button>
+        <button type="button" class="ghost accent" data-refuge-idx="${idx}" style="padding:4px 8px;font-size:11.5px;margin-top:2px">Show cool walk</button>
       </div>
     `;
   });
@@ -2885,11 +3266,11 @@ fetch('data/shade_priority.json').then((r) => r.json()).then((rows) => {
   const tbody = document.getElementById('shadePriorityRows');
   if (!tbody || !rows) return;
   tbody.innerHTML = rows.slice(0, 15).map((r) => `
-    <tr style="cursor:pointer;border-bottom:1px solid var(--line)" data-lon="${r.lon}" data-lat="${r.lat}" data-name="${esc(r.corridor)}" data-surface="${r.avg_surface_c}" data-hot="${r.total_hot_m}">
-      <td style="padding:6px 8px;font-weight:500">${esc(r.corridor)}</td>
-      <td style="padding:6px 4px;color:var(--hot);font-weight:600">${r.avg_surface_c}°C</td>
-      <td style="padding:6px 4px;color:var(--ink2)">${r.total_hot_m}m</td>
-      <td style="padding:6px 4px;text-align:center" title="${r.schools} schools, ${r.hospitals} hospitals/clinics, ${r.bus_stops} bus stops">
+    <tr data-lon="${r.lon}" data-lat="${r.lat}" data-name="${esc(r.corridor)}" data-surface="${r.avg_surface_c}" data-hot="${r.total_hot_m}">
+      <td style="font-weight:600">${esc(r.corridor)}</td>
+      <td style="color:var(--hot);font-weight:600">${r.avg_surface_c}°C</td>
+      <td style="color:var(--ink2)">${r.total_hot_m}m</td>
+      <td style="text-align:center" title="${r.schools} schools, ${r.hospitals} hospitals/clinics, ${r.bus_stops} bus stops">
         ${r.schools ? '🏫' + r.schools : ''} ${r.hospitals ? '🏥' + r.hospitals : ''} ${r.bus_stops ? '🚏' + r.bus_stops : ''}
       </td>
     </tr>
@@ -2912,7 +3293,7 @@ fetch(C.apiUrl + '/health').then((r) => r.json()).then((h) => {
   if (h.validation_scenes && h.validation_scenes.length) {
     state.valDate = h.validation_scenes[0];
   }
-  if (m.landsat_date) $('#foot').innerHTML = `Heat is estimated from Landsat surface temperature (${m.landsat_date}) and Sentinel-2 vegetation (${m.sentinel_date}). It shows where streets hold heat, not the air temperature you will feel. Walking speed is assumed at ${h.walk_speed_mps} m/s. <a href="data/heat_grid.geojson" download="heat_grid.geojson" style="color:var(--cool)">Download the data</a> (GeoJSON).`;
+  if (m.landsat_date) $('#foot').innerHTML = `Heat is estimated from Landsat surface temperature (${m.landsat_date}) and Sentinel-2 vegetation (${m.sentinel_date}). It shows where streets hold heat, not the air temperature you will feel. Walking speed is assumed at ${h.walk_speed_mps} m/s. <a href="data/heat_grid.geojson" download="heat_grid.geojson">Download the data</a> (GeoJSON).`;
 }).catch(() => {});
 </script>
 </body>
@@ -3050,7 +3431,7 @@ def test_ui():
         assert "Independent check" in cool_caps, "Expected Independent check in CoolWalk card"
         
         # Verify Why helper text (B2)
-        why_text = page.text_content("#result > p.cap")
+        why_text = page.text_content("#result .cap")
         print(f"Why helper explanation: {why_text}")
         assert "cooler surface" in why_text or "greenery" in why_text or "avoiding" in why_text
         
