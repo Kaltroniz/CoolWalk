@@ -196,24 +196,11 @@ $$\text{bin}_k = \text{heats}\left[\left\lfloor \frac{k + 0.5}{48} \cdot N \righ
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: CoolWalk - heat-aware walking routes (S3, CloudFront, Lambda, HTTP API)
+Description: CoolWalk - heat-aware walking routes (S3, Lambda, HTTP API, Amplify Hosting)
 
 Resources:
   # Holds the routing graph, Athena results, and the Iceberg table
   DataBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
-
-  # Private storage for frontend asset backups
-  SiteBucket:
     Type: AWS::S3::Bucket
     Properties:
       PublicAccessBlockConfiguration:
@@ -260,7 +247,6 @@ Outputs:
   AmplifyUrl:     { Value: "https://main.d3miw0zrayytbj.amplifyapp.com" }
   ApiUrl:         { Value: !Sub "https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}" }
   DataBucket:     { Value: !Ref DataBucket }
-  SiteBucket:     { Value: !Ref SiteBucket }
 ```
 
 ### `scripts/deploy.ps1`
@@ -296,10 +282,8 @@ foreach ($o in $stackDesc.Stacks[0].Outputs) {
 }
 
 $apiUrl = $outputs["ApiUrl"]
-$siteBucket = $outputs["SiteBucket"]
-$siteUrl = $outputs["SiteUrl"]
 $dataBucket = $outputs["DataBucket"]
-$distId = $outputs["DistributionId"]
+$amplifyUrl = $outputs["AmplifyUrl"]
 
 $cfg = @"
 window.COOLWALK = {
@@ -312,17 +296,11 @@ window.COOLWALK = {
 
 Set-Content -Path (Join-Path $root "frontend\config.js") -Value $cfg -NoNewline
 
-aws s3 sync (Join-Path $root "frontend") "s3://$siteBucket/" --delete --region $Region
-if ($distId) {
-    aws cloudfront create-invalidation --distribution-id $distId --paths "/*"
-}
-
 # Deploy to AWS Amplify Hosting (provides managed HTTPS)
 python (Join-Path $root "scripts\deploy_amplify.py")
 
 Write-Host ""
-Write-Host "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
-Write-Host "S3 fallback: $siteUrl"
+Write-Host "Amplify:     $amplifyUrl"
 Write-Host "API:         $apiUrl"
 Write-Host "Data bucket: $dataBucket   (`$env:COOLWALK_BUCKET = '$dataBucket')"
 ```
@@ -346,8 +324,7 @@ sam deploy --stack-name "$STACK" --region "$AWS_REGION" --resolve-s3 \
 
 out() { aws cloudformation describe-stacks --stack-name "$STACK" --region "$AWS_REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
-API_URL="$(out ApiUrl)"; SITE_BUCKET="$(out SiteBucket)"; SITE_URL="$(out SiteUrl)"
-DIST_ID="$(out DistributionId)"; DATA_BUCKET="$(out DataBucket)"
+API_URL="$(out ApiUrl)"; DATA_BUCKET="$(out DataBucket)"; AMPLIFY_URL="$(out AmplifyUrl)"
 
 cat > frontend/config.js <<CFG
 window.COOLWALK = {
@@ -358,20 +335,29 @@ window.COOLWALK = {
 };
 CFG
 
-aws s3 sync frontend/ "s3://$SITE_BUCKET/" --delete --region "$AWS_REGION"
-if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
-  aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" >/dev/null || true
-fi
-
 # Deploy to AWS Amplify Hosting (provides managed HTTPS)
 python3 scripts/deploy_amplify.py
 
 echo
-echo "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
-echo "S3 fallback: $SITE_URL"
+echo "Amplify:     $AMPLIFY_URL"
 echo "API:         $API_URL"
 echo "Data bucket: $DATA_BUCKET   (export COOLWALK_BUCKET=$DATA_BUCKET)"
-echo "Add https://main.d3miw0zrayytbj.amplifyapp.com/* to the API key's allowed referers."
+echo "Add $AMPLIFY_URL/* to the API key's allowed referers."
+```
+
+### `scripts/augment_graph.py`
+```python
+import gzip, json, pandas as pd
+
+seg = pd.read_parquet("work/segments.parquet").set_index("edge_id")
+lst, veg = seg.lst_c.to_dict(), seg.ndvi.to_dict()
+with gzip.open("work/graph.json.gz", "rt", encoding="utf-8") as f:
+    g = json.load(f)
+for e in g["edges"]:
+    e[5:] = [round(float(lst[e[4]]), 2), round(float(veg[e[4]]), 3)]
+with gzip.open("work/graph.json.gz", "wt", encoding="utf-8") as f:
+    json.dump(g, f, separators=(",", ":"))
+print("edges with lst and ndvi:", len(g["edges"]))
 ```
 
 ### `scripts/deploy_amplify.py`
@@ -386,9 +372,33 @@ import zipfile
 import boto3
 
 REGION = os.getenv("AMPLIFY_REGION", "us-east-2")
-APP_ID = os.getenv("AMPLIFY_APP_ID", "d3miw0zrayytbj")
 BRANCH = os.getenv("AMPLIFY_BRANCH", "main")
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+
+def get_app_id(amp):
+    app_id = os.getenv("AMPLIFY_APP_ID")
+    if app_id:
+        return app_id
+    print("AMPLIFY_APP_ID is not set; checking for existing app or creating a new Amplify app...")
+    apps = amp.list_apps().get("apps", [])
+    matches = [a for a in apps if a.get("name") == "coolwalk"]
+    if matches:
+        app_id = matches[0]["appId"]
+        print(f"Found existing Amplify app 'coolwalk' with ID: {app_id}")
+    else:
+        created = amp.create_app(name="coolwalk", platform="WEB")
+        app_id = created["app"]["appId"]
+        print(f"Created new Amplify app 'coolwalk' with ID: {app_id}")
+
+    try:
+        amp.get_branch(appId=app_id, branchName=BRANCH)
+    except Exception:
+        print(f"Creating branch '{BRANCH}' on app {app_id}...")
+        amp.create_branch(appId=app_id, branchName=BRANCH)
+
+    print(f"AMPLIFY_APP_ID={app_id}")
+    return app_id
 
 
 def main():
@@ -404,8 +414,10 @@ def main():
     print(f"Created zip ({len(zip_bytes):,} bytes).")
 
     amp = boto3.client("amplify", region_name=REGION)
-    print(f"Creating deployment on Amplify App {APP_ID} ({BRANCH})...")
-    dep = amp.create_deployment(appId=APP_ID, branchName=BRANCH)
+    app_id = get_app_id(amp)
+
+    print(f"Creating deployment on Amplify App {app_id} ({BRANCH})...")
+    dep = amp.create_deployment(appId=app_id, branchName=BRANCH)
     job_id = dep["jobId"]
     upload_url = dep["zipUploadUrl"]
 
@@ -417,16 +429,16 @@ def main():
             sys.exit(f"Upload failed: {resp.status}")
 
     print(f"Starting deployment job {job_id}...")
-    amp.start_deployment(appId=APP_ID, branchName=BRANCH, jobId=job_id)
+    amp.start_deployment(appId=app_id, branchName=BRANCH, jobId=job_id)
 
     print("Waiting for deployment to succeed...")
     for _ in range(30):
         time.sleep(3)
-        job = amp.get_job(appId=APP_ID, branchName=BRANCH, jobId=job_id)
+        job = amp.get_job(appId=app_id, branchName=BRANCH, jobId=job_id)
         status = job["job"]["summary"]["status"]
         print(f"Job {job_id} status: {status}")
         if status == "SUCCEED":
-            url = f"https://{BRANCH}.{APP_ID}.amplifyapp.com"
+            url = f"https://{BRANCH}.{app_id}.amplifyapp.com"
             print(f"\nSuccessfully deployed to Amplify: {url}")
             return
         if status in ("FAILED", "CANCELLED"):
@@ -670,7 +682,7 @@ def ndvi(sc, lon, lat):
     for it in sc["sentinel"]["items"]:
         red, nir, scl = Raster(it["red"]), Raster(it["nir"]), Raster(it["scl"])
         r, n, c = red.sample(lon, lat), nir.sample(lon, lat), scl.sample(lon, lat)
-        r = np.where(r > 0, np.clip((r - 1000.0) / 10000.0, 0, None), np.nan)   # L2A BOA offset
+        r = np.where(r > 0, np.clip((r - 1000.0) / 10000.0, 0.01, None), np.nan)   # L2A BOA offset, floored to prevent zero division
         n = np.where(n > 0, np.clip((n - 1000.0) / 10000.0, 0, None), np.nan)
         v = (n - r) / (n + r + 1e-6)
         v[np.isin(np.nan_to_num(c), [0, 1, 3, 8, 9, 10, 11])] = np.nan
@@ -714,7 +726,7 @@ def main():
     })
     seg.to_parquet(config.WORK / "segments.parquet", index=False)
 
-    # compact routing graph
+    # compact routing graph: edge schema [u, v, length, heat, edge_id, lst_c, ndvi]
     ids = pd.unique(pd.concat([seg.u, seg.v]))
     index = {int(n): i for i, n in enumerate(ids)}
     node_xy = [[round(float(nodes.loc[n, "x"]), 6), round(float(nodes.loc[n, "y"]), 6)] for n in ids]
@@ -725,7 +737,7 @@ def main():
         if (coords[0][0] - u_xy[0]) ** 2 + (coords[0][1] - u_xy[1]) ** 2 > \
            (coords[-1][0] - u_xy[0]) ** 2 + (coords[-1][1] - u_xy[1]) ** 2:
             coords.reverse()                                          # make geometry run u -> v
-        g_edges.append([index[int(row.u)], index[int(row.v)], float(row.length_m), float(row.heat_index), int(row.edge_id)])
+        g_edges.append([index[int(row.u)], index[int(row.v)], float(row.length_m), float(row.heat_index), int(row.edge_id), float(row.lst_c), float(row.ndvi)])
         g_geoms.append(coords)
     meta = {"bbox": list(config.BBOX), "landsat_date": sc["landsat"]["date"], "landsat_id": sc["landsat"]["id"],
             "sentinel_date": sc["sentinel"]["date"], "weights": {"lst": config.W_LST, "veg": config.W_VEG},
@@ -791,7 +803,7 @@ FROM coolwalk.segments
 ### `pipeline/sql/q_hottest_streets.sql`
 ```sql
 SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
-       round(avg(lst_c), 1) AS lst_c, round(approx_percentile(mid_lon, 0.5), 5) AS lon, round(approx_percentile(mid_lat, 0.5), 5) AS lat
+       round(avg(lst_c), 1) AS lst_c, round(max_by(mid_lon, length_m), 5) AS lon, round(max_by(mid_lat, length_m), 5) AS lat
 FROM coolwalk.segments
 WHERE name IS NOT NULL AND name <> '' AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
 GROUP BY name HAVING sum(length_m) > 500
@@ -801,7 +813,7 @@ ORDER BY heat DESC LIMIT 8;
 ### `pipeline/sql/q_coolest_streets.sql`
 ```sql
 SELECT name, round(avg(heat_index), 3) AS heat, round(sum(length_m)) AS length_m,
-       round(avg(lst_c), 1) AS lst_c, round(approx_percentile(mid_lon, 0.5), 5) AS lon, round(approx_percentile(mid_lat, 0.5), 5) AS lat
+       round(avg(lst_c), 1) AS lst_c, round(max_by(mid_lon, length_m), 5) AS lon, round(max_by(mid_lat, length_m), 5) AS lat
 FROM coolwalk.segments
 WHERE name IS NOT NULL AND name <> '' AND highway IN ('primary','secondary','tertiary','residential','unclassified','pedestrian','living_street')
 GROUP BY name HAVING sum(length_m) > 500
@@ -1037,7 +1049,7 @@ def build(data):
     nodes, edges, geoms = data["nodes"], data["edges"], data["geoms"]
     adj = [[] for _ in nodes]
     for i, e in enumerate(edges):
-        u, v, length, heat, _eid = e[:5]          # a 6th item, if present, is mean surface temp (C)
+        u, v, length, heat, _eid = e[:5]          # 6th is lst_c, 7th is ndvi if present
         adj[u].append((v, length, heat, i))
     node_grid = {}
     for i, (lon, lat) in enumerate(nodes):
@@ -1045,8 +1057,9 @@ def build(data):
     pt_grid = {}
     for i, e in enumerate(edges):
         lst = e[5] if len(e) > 5 else None
+        ndvi = e[6] if len(e) > 6 else None
         for lon, lat in densify(geoms[i]):
-            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst))
+            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst, ndvi))
     return {"nodes": nodes, "edges": edges, "geoms": geoms, "adj": adj,
             "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {})}
 
@@ -1128,15 +1141,17 @@ def _round_line(line):
     return [[round(x, 5), round(y, 5)] for x, y in line]
 
 
-def _finish(length_m, heats, profile, line=None, extra=None, lsts=None):
+def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=None):
     known = [h for h in heats if h is not None]
     known_lst = [t for t in (lsts or []) if t is not None]
+    known_ndvi = [v for v in (ndvis or []) if v is not None]
     out = {
         "length_m": round(length_m, 1),
         "minutes": round(length_m / WALK_MPS / 60.0, 1),
         "mean_heat": round(sum(known) / len(known), 3) if known else None,
-        "mean_lst_c": round(sum(known_lst) / len(known_lst), 1) if known_lst else None,
         "hot_share": round(sum(1 for h in known if h >= HOT_T) / len(known), 3) if known else None,
+        "mean_lst_c": round(sum(known_lst) / len(known_lst), 1) if known_lst else None,
+        "mean_ndvi": round(sum(known_ndvi) / len(known_ndvi), 3) if known_ndvi else None,
         "profile": [None if p is None else round(p, 3) for p in profile],
     }
     if line is not None:
@@ -1148,7 +1163,7 @@ def _finish(length_m, heats, profile, line=None, extra=None, lsts=None):
 
 def path_metrics(g, eis):
     edges, geoms = g["edges"], g["geoms"]
-    line, cum, total, per_edge, per_lst = [], [], 0.0, [], []
+    line, cum, total, per_edge, per_lst, per_ndvi = [], [], 0.0, [], [], []
     for ei in eis:
         gm = geoms[ei]
         line.extend(gm if not line else gm[1:])
@@ -1156,39 +1171,45 @@ def path_metrics(g, eis):
         cum.append(total)
         per_edge.append(edges[ei][3])
         per_lst.append(edges[ei][5] if len(edges[ei]) > 5 else None)
+        per_ndvi.append(edges[ei][6] if len(edges[ei]) > 6 else None)
     # length-weighted heat samples at 5 m spacing for stable shares
-    heats, lsts, prev = [], [], 0.0
-    for c, h, t in zip(cum, per_edge, per_lst):
+    heats, lsts, ndvis, prev = [], [], [], 0.0
+    for c, h, t, v in zip(cum, per_edge, per_lst, per_ndvi):
         n = max(1, int((c - prev) // 5))
         heats.extend([h] * n)
         lsts.extend([t] * n)
+        ndvis.extend([v] * n)
         prev = c
     profile = []
     for k in range(BINS):
         d = (k + 0.5) / BINS * total
         profile.append(per_edge[min(bisect.bisect_left(cum, d), len(per_edge) - 1)])
-    return _finish(total, heats, profile, line, lsts=lsts)
+    return _finish(total, heats, profile, line, lsts=lsts, ndvis=ndvis)
 
 
 def score_line(g, line):
     pts = list(densify([tuple(p) for p in line]))
-    heats, lsts = [], []
+    heats, lsts, ndvis = [], [], []
     for lon, lat in pts:
         cx, cy = cell(lon, lat)
         best = None
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                for plon, plat, h, lst in g["pt_grid"].get((cx + dx, cy + dy), ()):
+                for pt_tuple in g["pt_grid"].get((cx + dx, cy + dy), ()):
+                    plon, plat, h = pt_tuple[:3]
+                    lst = pt_tuple[3] if len(pt_tuple) > 3 else None
+                    ndvi = pt_tuple[4] if len(pt_tuple) > 4 else None
                     d = dist_m(lon, lat, plon, plat)
                     if d <= MATCH_M and (best is None or d < best[0]):
-                        best = (d, h, lst)
+                        best = (d, h, lst, ndvi)
         heats.append(best[1] if best else None)
         lsts.append(best[2] if best else None)
+        ndvis.append(best[3] if best else None)
     length = sum(dist_m(a[0], a[1], b[0], b[1]) for a, b in zip(line, line[1:]))
     profile = [heats[min(int((k + 0.5) / BINS * len(heats)), len(heats) - 1)] for k in range(BINS)] if heats else []
     matched = sum(1 for h in heats if h is not None)
     return _finish(length, heats, profile, None,
-                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts)
+                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts, ndvis=ndvis)
 
 
 # ---------------------------------------------------------------- handlers
@@ -1290,7 +1311,7 @@ import app  # noqa: E402
 LON0, LAT0, STEP = 77.2000, 28.6000, 0.001  # ~100 m grid
 
 
-def make_graph(cols=12, rows=3, hot_row=0, cool_row=2):
+def make_graph(cols=12, rows=3, hot_row=0, cool_row=2, edge_len=7):
     """rows are horizontal streets; the direct row is hot, the far row is cool."""
     nodes, idx = [], {}
     for r in range(rows):
@@ -1299,20 +1320,26 @@ def make_graph(cols=12, rows=3, hot_row=0, cool_row=2):
             nodes.append([LON0 + c * STEP, LAT0 + r * STEP])
     edges, geoms = [], []
 
-    def add(a, b, heat, lst):
+    def add(a, b, heat, lst, ndvi):
         for u, v in ((a, b), (b, a)):
             length = app.dist_m(*nodes[u], *nodes[v])
-            edges.append([u, v, length, heat, len(edges), lst])
+            edge = [u, v, length, heat, len(edges)]
+            if edge_len >= 6:
+                edge.append(lst)
+            if edge_len >= 7:
+                edge.append(ndvi)
+            edges.append(edge)
             geoms.append([nodes[u], nodes[v]])
 
     for r in range(rows):
         heat = 0.95 if r == hot_row else (0.05 if r == cool_row else 0.5)
         lst = 46.0 if r == hot_row else (38.0 if r == cool_row else 42.0)
+        ndvi = 0.1 if r == hot_row else (0.8 if r == cool_row else 0.4)
         for c in range(cols - 1):
-            add(idx[(c, r)], idx[(c + 1, r)], heat, lst)
+            add(idx[(c, r)], idx[(c + 1, r)], heat, lst, ndvi)
     for c in (0, cols - 1):  # only the two ends connect the streets
         for r in range(rows - 1):
-            add(idx[(c, r)], idx[(c, r + 1)], 0.5, 42.0)
+            add(idx[(c, r)], idx[(c, r + 1)], 0.5, 42.0, 0.4)
     meta = {"bbox": [LON0 - 0.001, LAT0 - 0.001, LON0 + cols * STEP, LAT0 + rows * STEP]}
     return app.build({"nodes": nodes, "edges": edges, "geoms": geoms, "meta": meta})
 
@@ -1326,6 +1353,7 @@ def test_alpha_zero_is_shortest():
     assert abs(m["length_m"] - 11 * app.dist_m(LON0, LAT0, LON0 + STEP, LAT0)) < 1.0
     assert m["hot_share"] == 1.0  # the direct street is the hot one
     assert m["mean_lst_c"] == 46.0
+    assert m["mean_ndvi"] == 0.1
 
 
 def test_cool_route_avoids_heat_with_bounded_detour():
@@ -1335,6 +1363,7 @@ def test_cool_route_avoids_heat_with_bounded_detour():
     assert out["cool"]["hot_share"] < out["shortest"]["hot_share"]
     assert out["cool"]["mean_heat"] < out["shortest"]["mean_heat"]
     assert out["cool"]["mean_lst_c"] < out["shortest"]["mean_lst_c"]
+    assert out["cool"]["mean_ndvi"] > out["shortest"]["mean_ndvi"]
     assert out["cool"]["length_m"] <= out["shortest"]["length_m"] * 1.8
     assert out["cool"]["minutes"] > out["shortest"]["minutes"]
     assert len(out["cool"]["profile"]) == app.BINS
@@ -1355,6 +1384,21 @@ def test_score_line_matches_streets():
     assert hot["coverage"] > 0.9 and cool["coverage"] > 0.9
     assert hot["mean_heat"] > 0.9 and cool["mean_heat"] < 0.1
     assert hot["mean_lst_c"] > cool["mean_lst_c"]
+    assert hot["mean_ndvi"] < cool["mean_ndvi"]
+
+
+def test_backward_compatible_legacy_graph():
+    # 5-element edges (no lst, no ndvi)
+    g5 = make_graph(edge_len=5)
+    out5 = app.route(g5, {"origin": [LON0, LAT0], "destination": [LON0 + 11 * STEP, LAT0], "alpha": 3})
+    assert out5["cool"]["mean_lst_c"] is None
+    assert out5["cool"]["mean_ndvi"] is None
+
+    # 6-element edges (lst only)
+    g6 = make_graph(edge_len=6)
+    out6 = app.route(g6, {"origin": [LON0, LAT0], "destination": [LON0 + 11 * STEP, LAT0], "alpha": 3})
+    assert out6["cool"]["mean_lst_c"] is not None
+    assert out6["cool"]["mean_ndvi"] is None
 
 
 def test_validation_errors():
@@ -1411,6 +1455,11 @@ window.COOLWALK = {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CoolWalk: the cooler way to walk across Delhi</title>
 <meta name="description" content="Walking routes for central Delhi that trade a few minutes for much less time in the heat.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="CoolWalk: the cooler way to walk across Delhi">
+<meta property="og:description" content="Walking routes for central Delhi that trade a few minutes for far less time on hot, bare streets.">
+<meta property="og:image" content="https://main.d3miw0zrayytbj.amplifyapp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1430,6 +1479,8 @@ button,input{font:inherit;color:inherit}
 :focus-visible{outline:3px solid #1B6FD6;outline-offset:2px}
 #map{height:100dvh;width:100%}
 .panel{height:100dvh;overflow:auto;padding:22px 20px 28px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:18px}
+.grab{display:none;border:0;background:none;padding:6px;width:100%}
+.grab::after{content:"";display:block;width:44px;height:5px;margin:0 auto;border-radius:3px;background:#B9C4CA}
 h1{font:700 36px/1 var(--display);letter-spacing:-.02em;margin:0 0 8px}
 h2{font:600 13px/1.2 var(--body);color:var(--ink2);margin:0 0 8px}
 .tag{margin:0;color:var(--ink2);max-width:36ch}
@@ -1457,7 +1508,7 @@ h2{font:600 13px/1.2 var(--body);color:var(--ink2);margin:0 0 8px}
 .ends{display:flex;justify-content:space-between;color:var(--ink2);font-size:13px}
 #result{min-height:96px}
 .empty{color:var(--ink2);margin:0}
-.verdict{font:600 21px/1.25 var(--display);margin:0 0 14px;letter-spacing:-.01em}
+.verdict{font:600 21px/1.25 var(--display);margin:0 0 4px;letter-spacing:-.01em}
 .route{border-left:4px solid var(--std);padding:2px 0 2px 12px;margin:0 0 14px}
 .route.cool{border-left-color:var(--cool)}
 .route h3{margin:0;font:600 14px var(--body);color:var(--ink2)}
@@ -1466,7 +1517,7 @@ h2{font:600 13px/1.2 var(--body);color:var(--ink2);margin:0 0 8px}
 .big small{font:500 14px var(--body);color:var(--ink2);margin-left:6px}
 .strip{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:8px 0 4px;background:#C9D1D6}
 .strip i{flex:1}
-.cap{margin:0;color:var(--ink2);font-size:13px}
+.cap{margin:0 0 10px;color:var(--ink2);font-size:13px}
 .note{background:#FFF4DB;color:var(--warn);border-radius:8px;padding:8px 10px;font-size:13px;margin:0 0 12px}
 .err{background:#FDE8E4;color:#8C2412;border-radius:8px;padding:10px 12px;margin:0}
 .busy{height:3px;background:linear-gradient(90deg,var(--cool) 30%,transparent 30%) 0 0/200% 100%;animation:sweep 1s linear infinite;border-radius:2px;margin-bottom:10px}
@@ -1488,6 +1539,8 @@ details li{margin:3px 0}
   body{grid-template-columns:1fr}
   #map{position:fixed;inset:0}
   .panel{position:fixed;left:0;right:0;bottom:0;height:auto;max-height:54dvh;z-index:5;border:0;border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(20,34,43,.2);padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px));gap:14px}
+  .grab{display:block}
+  .panel.collapsed{max-height:132px;overflow:hidden}
   h1{font-size:28px}
   .tag{display:none}
 }
@@ -1495,6 +1548,7 @@ details li{margin:3px 0}
 </head>
 <body>
 <aside class="panel" id="panel">
+  <button class="grab" id="grab" type="button" aria-label="Expand or collapse panel" aria-expanded="true"></button>
   <header>
     <h1>CoolWalk</h1>
     <p class="tag">Walking routes that give up a few minutes for far less time in the heat. Central Delhi, pre-monsoon 2026.</p>
@@ -1509,7 +1563,11 @@ details li{margin:3px 0}
       <label class="field"><span class="pin b">B</span><input id="to" type="search" placeholder="End: a place or click the map" autocomplete="off" aria-label="End"></label>
       <ul class="sugg" id="suggTo"></ul>
     </div>
-    <div class="row"><button class="ghost" id="swap" type="button">Swap A and B</button><button class="ghost" id="clear" type="button">Clear</button></div>
+    <div class="row">
+      <button class="ghost" id="swap" type="button">Swap A and B</button>
+      <button class="ghost" id="clear" type="button">Clear</button>
+      <button class="ghost" id="share" type="button">Copy link</button>
+    </div>
   </section>
 
   <section aria-label="Example walks">
@@ -1530,13 +1588,22 @@ details li{margin:3px 0}
   <section class="layers">
     <label><input type="checkbox" id="heat" checked> Show how hot each area runs</label>
     <div class="legend" aria-hidden="true"></div>
-    <div class="ends"><span>Cooler</span><span>Hotter</span></div>
+    <div class="ends" id="legendEnds"><span>Cooler</span><span>Hotter</span></div>
   </section>
 
   <details id="findings" hidden>
     <summary>What the data shows</summary>
     <p class="cap" id="findLead" style="margin-top:8px"></p>
     <div class="cols"><div><h2>Hottest streets</h2><ol id="hotList"></ol></div><div><h2>Coolest streets</h2><ol id="coolList"></ol></div></div>
+  </details>
+
+  <details id="howItWorks">
+    <summary>How it works, and the limits</summary>
+    <div style="margin-top:8px;display:grid;gap:8px" class="cap">
+      <p><strong>Where the data comes from:</strong> Surface temperature from USGS Landsat 8 (June 2026), vegetation index from Copernicus Sentinel-2 (June 2026), and walkable street geometry from OpenStreetMap.</p>
+      <p><strong>How routes are found:</strong> Street segments hold a heat cost based on high surface temperature and lack of greenery. An A* router searches for the coolest path, capped at a sensible detour above the direct route.</p>
+      <p><strong>The limits:</strong> Satellite observations capture surface temperature on clear summer mornings, not ambient air temperature or transient humidity. Shading from trees and awnings is reflected in vegetation and temperature proxies, but tall building shadows vary by time of day. Walking pace is assumed at 1.35 m/s.</p>
+    </div>
   </details>
 
   <p class="foot" id="foot">Heat comes from satellite surface temperature and vegetation. It shows where streets hold heat, not the air temperature you will feel.</p>
@@ -1559,50 +1626,37 @@ const state = {a:null, b:null, mk:{}, alpha:3};
 const center = [(C.bbox[0]+C.bbox[2])/2, (C.bbox[1]+C.bbox[3])/2];
 const inBox = (p) => p[0]>=C.bbox[0] && p[0]<=C.bbox[2] && p[1]>=C.bbox[1] && p[1]<=C.bbox[3];
 
-/* ---------- colour helpers for the heat strip ---------- */
-const hex = (h) => [1,3,5].map((i) => parseInt(h.slice(i,i+2),16));
-function ramp(v){
-  if (v == null) return '#C9D1D6';
-  v = Math.max(0, Math.min(1, v));
-  for (let i = 1; i < RAMP.length; i++){
-    if (v <= RAMP[i][0]){
-      const [a,ca] = RAMP[i-1], [b,cb] = RAMP[i], t = (v-a)/(b-a), pa = hex(ca), pb = hex(cb);
-      return '#' + pa.map((x,k) => Math.round(x+(pb[k]-x)*t).toString(16).padStart(2,'0')).join('');
-    }
-  }
-  return RAMP[RAMP.length-1][1];
-}
-const strip = (profile, which) => `<div class="strip" data-which="${which}" role="img" aria-label="Heat along the walk, start to end">${(profile||[]).map((v, idx) => `<i data-idx="${idx}" title="Bin ${idx+1}/48 · Heat index: ${v != null ? v : 'N/A'}" style="background:${ramp(v)}"></i>`).join('')}</div>`;
-
-const dist_m = (lon1, lat1, lon2, lat2) => {
-  const k = Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
-  return Math.hypot((lon2 - lon1) * 111320 * k, (lat2 - lat1) * 110540);
+$('#grab').onclick = () => {
+  const c = $('#panel').classList.toggle('collapsed');
+  $('#grab').setAttribute('aria-expanded', String(!c));
 };
 
-function pointAtDist(line, targetDist){
-  if (!line || !line.length) return null;
-  if (line.length === 1 || targetDist <= 0) return line[0];
-  let cum = 0;
-  for (let i = 0; i < line.length - 1; i++){
-    const d = dist_m(line[i][0], line[i][1], line[i+1][0], line[i+1][1]);
-    if (cum + d >= targetDist){
-      const t = d > 0 ? (targetDist - cum) / d : 0;
-      return [line[i][0] + (line[i+1][0] - line[i][0]) * t, line[i][1] + (line[i+1][1] - line[i][1]) * t];
-    }
-    cum += d;
+$('#share').onclick = async () => {
+  const b = $('#share');
+  try {
+    await navigator.clipboard.writeText(location.href);
+    b.textContent = 'Link copied';
+  } catch (_) {
+    b.textContent = 'Press Ctrl+C on the address bar';
   }
-  return line[line.length - 1];
-}
+  setTimeout(() => { b.textContent = 'Copy link'; }, 1800);
+};
 
-/* ---------- map ---------- */
-const keyed = (url) => (url.includes('amazonaws.com') && !url.includes('key=')) ? url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(C.mapKey) : url;
+/* ---------- map setup ---------- */
+const styleUrl = `https://maps.geo.${C.region}.amazonaws.com/v2/styles/Standard/descriptor?key=${encodeURIComponent(C.mapKey)}&color-scheme=Light`;
 const map = new maplibregl.Map({
   container: 'map',
-  style: `https://maps.geo.${C.region}.amazonaws.com/v2/styles/Standard/descriptor?key=${encodeURIComponent(C.mapKey)}&color-scheme=Light`,
-  center, zoom: 12.3, attributionControl: {compact: true},
-  transformRequest: (url) => ({url: keyed(url)}),
+  style: styleUrl,
+  center: center,
+  zoom: 13,
+  minZoom: 11,
+  maxZoom: 18,
+  maxBounds: [[C.bbox[0]-0.05, C.bbox[1]-0.05], [C.bbox[2]+0.05, C.bbox[3]+0.05]],
+  attributionControl: false
 });
 map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-right');
+map.addControl(new maplibregl.AttributionControl({compact:true, customAttribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Landsat 8/9 &copy; USGS/NASA | Sentinel-2 &copy; Copernicus'}), 'bottom-right');
+
 const pad = () => matchMedia('(max-width:820px)').matches
   ? {top:40, left:20, right:20, bottom:Math.round(innerHeight*.56)} : {top:60, bottom:60, right:60, left:440};
 map.fitBounds([[C.bbox[0],C.bbox[1]],[C.bbox[2],C.bbox[3]]], {padding: pad(), duration: 0});
@@ -1623,8 +1677,12 @@ map.on('load', async () => {
     map.addLayer({id:'r-'+id+'-case', type:'line', source:'r-'+id, layout:{'line-cap':'round','line-join':'round'}, paint:{'line-color':'#fff','line-width':width+4}});
     map.addLayer({id:'r-'+id, type:'line', source:'r-'+id, layout:{'line-cap': dash ? 'butt':'round','line-join':'round'}, paint:Object.assign({'line-color':color,'line-width':width}, dash ? {'line-dasharray':dash} : {})});
   }
-  loadFromHash();
-  if (state.a && state.b) plan();
+  if (!loadFromHash()) {
+    const p = PRESETS[1];
+    setPoint('a', p.a, p.label);
+    setPoint('b', p.b, p.to);
+  }
+  plan();
 });
 $('#heat').addEventListener('change', (e) => { if (map.getLayer('heat')) map.setLayoutProperty('heat','visibility', e.target.checked ? 'visible' : 'none'); });
 
@@ -1741,7 +1799,21 @@ async function plan(){
   } catch (e) { if (me === runId) showError(e.message); }
 }
 const pct = (v) => Math.round((v || 0) * 100);
+
+function why(cool, std){
+  const parts = [];
+  const dT = (std.mean_lst_c != null && cool.mean_lst_c != null) ? std.mean_lst_c - cool.mean_lst_c : 0;
+  if (dT >= 0.3) parts.push(`${dT.toFixed(1)} °C cooler surface`);
+  if (std.mean_ndvi > 0 && cool.mean_ndvi != null) {
+    const g = (cool.mean_ndvi - std.mean_ndvi) / std.mean_ndvi;
+    if (g >= 0.1) parts.push(`${Math.round(g * 100)}% more greenery`);
+  }
+  return parts.length ? `Why: ${parts.join(' and ')}.`
+    : 'Average surface temperature and greenery are similar; the gain is in avoiding the hottest stretches.';
+}
+
 function show(r, aws){
+  clearTimeout(warmTimer);
   const usable = aws && aws.coverage >= 0.6;
   const std = usable ? aws : r.shortest;
   const stdLabel = usable ? 'Standard walk (Amazon Location Service)' : 'Shortest walk';
@@ -1755,6 +1827,7 @@ function show(r, aws){
   if (r.alpha_used < state.alpha) notes.push('The cooler route was limited to a reasonable detour.');
   $('#result').innerHTML = `
     <p class="verdict">${esc(verdict)}</p>
+    <p class="cap">${esc(why(cool, std))}</p>
     ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join('')}
     <div class="route cool"><h3>CoolWalk</h3>
       <div class="big">${Math.round(cool.minutes)} min<small>${(cool.length_m/1000).toFixed(1)} km</small></div>
@@ -1773,8 +1846,47 @@ function show(r, aws){
   map.fitBounds(b, {padding: pad(), duration: 600, maxZoom: 16});
 }
 function draw(id, line){ const s = map.getSource('r-' + id); if (s) s.setData({type:'Feature', geometry:{type:'LineString', coordinates: line}}); }
-const busy = () => { $('#result').insertAdjacentHTML('afterbegin', '<div class="busy" role="status" aria-label="Finding the coolest walk"></div>'); };
-function showError(msg){ $('#result').innerHTML = `<p class="err" role="alert">${esc(msg)}</p>`; }
+let warmTimer;
+const busy = () => {
+  $('#result').insertAdjacentHTML('afterbegin', '<div class="busy" role="status" aria-label="Finding the coolest walk"></div>');
+  clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    const b = $('#result .busy');
+    if (b) b.insertAdjacentHTML('afterend', '<p class="cap">Waking the routing service. The first request takes a few seconds.</p>');
+  }, 1500);
+};
+function showError(msg){
+  clearTimeout(warmTimer);
+  $('#result').innerHTML = `<p class="err" role="alert">${esc(msg)}</p>`;
+}
+function strip(profile, which){
+  if (!profile || !profile.length) return '';
+  return `<div class="strip" data-which="${which || ''}">${profile.map((h, i) => {
+    if (h == null) return '<i style="background:#8C9BA5" data-idx="'+i+'"></i>';
+    for (let k = RAMP.length - 1; k >= 0; k--) if (h >= RAMP[k][0]) return `<i style="background:${RAMP[k][1]}" data-idx="${i}"></i>`;
+    return `<i style="background:${RAMP[0][1]}" data-idx="${i}"></i>`;
+  }).join('')}</div>`;
+}
+
+function distM(a, b){
+  const k = Math.cos((a[1] + b[1]) * Math.PI / 360);
+  return Math.hypot((b[0] - a[0]) * 111320 * k, (b[1] - a[1]) * 110540);
+}
+function pointAtDist(line, targetDist){
+  if (!line || !line.length) return null;
+  if (targetDist <= 0) return line[0];
+  let acc = 0;
+  for (let i = 0; i < line.length - 1; i++){
+    const d = distM(line[i], line[i+1]);
+    if (acc + d >= targetDist){
+      const t = d > 0 ? (targetDist - acc) / d : 0;
+      return [line[i][0] + (line[i+1][0] - line[i][0]) * t, line[i][1] + (line[i+1][1] - line[i][1]) * t];
+    }
+    acc += d;
+  }
+  return line[line.length - 1];
+}
+
 let hoverDot = null;
 $('#result').addEventListener('mousemove', (e) => {
   const bar = e.target.closest('.strip i[data-idx]');
@@ -1788,7 +1900,7 @@ $('#result').addEventListener('mousemove', (e) => {
   if (!pt) return;
   if (!hoverDot) {
     const el = document.createElement('div');
-    el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#14222B;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);pointer-events:none;transform:translate(-50%,-50%)';
+    el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#14222B;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);pointer-events:none';
     hoverDot = new maplibregl.Marker({element: el}).setLngLat(pt).addTo(map);
   } else {
     hoverDot.setLngLat(pt);
@@ -1800,17 +1912,27 @@ $('#result').addEventListener('mouseleave', () => {
 $('#alpha').addEventListener('input', debounce((e) => { state.alpha = +e.target.value; plan(); }, 200));
 
 /* ---------- data story and provenance ---------- */
+let streetPopup = null;
 fetch('data/findings.json').then((r) => r.json()).then((f) => {
   $('#findLead').textContent = `${pct(f.hot_share)}% of the ${Math.round(f.network_km)} km of walkable streets in this area sit in high-heat zones.`;
+  if (f.lst_p05_c != null && f.lst_p95_c != null) {
+    $('#legendEnds').innerHTML = `<span>Cooler (about ${f.lst_p05_c} °C surface)</span><span>Hotter (about ${f.lst_p95_c} °C)</span>`;
+  }
   const li = (a) => a.slice(0,5).map((x) =>
-    `<li><button type="button" class="link-btn" data-lon="${x.lon||''}" data-lat="${x.lat||''}">${esc(x.name)} <small>(${x.lst_c}°C)</small></button></li>`
+    `<li><button type="button" class="link-btn" data-name="${esc(x.name)}" data-lst="${x.lst_c}" data-heat="${x.heat}" data-lon="${x.lon||''}" data-lat="${x.lat||''}">${esc(x.name)} <small>(${x.lst_c}°C)</small></button></li>`
   ).join('');
   $('#hotList').innerHTML = li(f.hottest); $('#coolList').innerHTML = li(f.coolest);
   $('#findings').hidden = false;
   $('#findings').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-lon]');
     if (b && b.dataset.lon && b.dataset.lat) {
-      map.flyTo({center: [+b.dataset.lon, +b.dataset.lat], zoom: 15.5, duration: 800});
+      const pt = [+b.dataset.lon, +b.dataset.lat];
+      map.flyTo({center: pt, zoom: 15.5, padding: pad(), duration: 800});
+      if (streetPopup) streetPopup.remove();
+      streetPopup = new maplibregl.Popup({closeButton: true, closeOnClick: true, offset: 12})
+        .setLngLat(pt)
+        .setHTML(`<strong>${esc(b.dataset.name)}</strong><br>Avg surface: ${b.dataset.lst}°C<br>Heat index: ${b.dataset.heat}`)
+        .addTo(map);
     }
   });
 }).catch(() => {});
@@ -2083,22 +2205,23 @@ print('All screenshots captured successfully!')
 - Temperature range (5th to 95th percentile, C): 40.3 °C to 46.3 °C
 
 ## Leafy vs dense streets
-Sample of 10 street segments across central Delhi:
+Sample of 11 street segments across central Delhi (verified against the scored Athena dataset):
 
-| Street Name | Classification | Surface Temp (LST) | Vegetation (NDVI) | Heat Index (0..1) | Context |
-|---|---|---|---|---|---|
-| **Akbar Road** | secondary | 40.6–41.9 °C | 0.885–0.961 | 0.042–0.159 | Dense canopy avenue in Lutyens' Delhi |
-| **Teen Murti Marg** | secondary | 41.0–42.5 °C | 0.927–0.954 | 0.068–0.217 | Forested boulevard |
-| **Janpath Lane** | tertiary | 42.2 °C | 0.935 | 0.192 | Tree-lined lane near Janpath |
-| **Janpath** | secondary | 42.5–43.5 °C | 0.365–0.755 | 0.252–0.475 | Wide mixed-use boulevard |
-| **Lal Kuan Bazar** | tertiary | 45.4–45.6 °C | 0.229–0.285 | 0.719–0.776 | Dense market street in Old Delhi |
-| **Khari Baoli Road** | tertiary | 46.4–46.7 °C | 0.279–0.365 | 0.741–0.814 | Historic wholesale spice market |
-| **Chandni Chowk** | tertiary | 46.2–46.5 °C | 0.235–0.349 | 0.754–0.843 | Core commercial thoroughfare, high thermal mass |
-| **Nai Sarak** | unclassified | 46.4 °C | 0.188–0.209 | 0.860–0.868 | Narrow book market corridor |
-| **Chawri Bazar** | tertiary | 46.1–46.3 °C | 0.169–0.172 | 0.869–0.871 | Narrow, high-density market street |
-| **Kinari Bazar** | unclassified | 46.2 °C | 0.115 | 0.914 | High-density alley in Shahjahanabad |
+| Street Name | Classification | Segments | Mean LST (°C) | Measured LST Range (°C) | Mean NDVI | Mean Heat Index (0..1) | Context |
+|---|---|---|---|---|---|---|---|
+| **Akbar Road** | secondary | 56 | 40.6 | 39.3–41.9 | 0.961 | 0.042 | Dense canopy avenue in Lutyens' Delhi |
+| **Teen Murti Marg** | secondary | 30 | 41.0 | 40.2–42.5 | 0.954 | 0.068 | Forested boulevard near Teen Murti |
+| **Janpath Lane** | tertiary | 20 | 42.2 | 41.6–43.6 | 0.935 | 0.192 | Tree-lined access lane near Janpath |
+| **Janpath** | secondary | 180 | 42.5 | 39.7–44.1 | 0.755 | 0.252 | Wide commercial and diplomatic avenue |
+| **Lal Kuan Bazar** | tertiary | 28 | 45.6 | 44.6–46.4 | 0.229 | 0.776 | Dense commercial corridor in Old Delhi |
+| **Khari Baoli Road** | tertiary | 12 | 46.4 | 45.6–47.0 | 0.365 | 0.741 | Historic wholesale spice market |
+| **Chandni Chowk** | tertiary | 84 | 46.2 | 45.2–46.8 | 0.349 | 0.754 | Primary commercial thoroughfare |
+| **Nai Sarak** | unclassified | 22 | 46.4 | 46.0–46.8 | 0.188 | 0.868 | Dense book market corridor |
+| **Chawri Bazar** | tertiary | 24 | 46.3 | 45.4–46.7 | 0.169 | 0.871 | High-density metal market street |
+| **Kinari Bazar** | unclassified | 18 | 46.2 | 45.9–46.5 | 0.115 | 0.914 | High-density jewelry alley in Shahjahanabad |
+| **Chipwara Khurd** | unclassified | 12 | 46.1 | 46.0–46.2 | 0.072 | 0.934 | Narrow residential/commercial alley |
 
-The physical contrast is stark: tree-covered avenues register 40.6–41.9 °C with dense canopy (NDVI > 0.88) and low heat scores (0.04–0.16), running about 4 to 5 °C cooler than unshaded asphalt corridors in Shahjahanabad that register 46.1–46.7 °C with minimal greenery (NDVI < 0.25) and extreme heat scores (0.75–0.93).
+The physical contrast is stark: tree-covered avenues register 40.6 °C on average with dense canopy (NDVI 0.961) and minimal heat scores (0.042), running about 4 to 6 °C cooler on average than unshaded asphalt corridors in Shahjahanabad (Akbar Road 40.6 °C vs Chandni Chowk 46.2 °C).
 
 ## Network
 - Share of street length in high-heat zones (heat index >= 0.66): 19.8% (471.4 km of 2,376.9 km)
@@ -2108,8 +2231,8 @@ The physical contrast is stark: tree-covered avenues register 40.6–41.9 °C wi
 ## Demo walks
 | Walk | Standard min | CoolWalk min | Standard hot share | CoolWalk hot share | Avoided exposure | Avg Surface Temp (Std vs Cool) | Source of standard route |
 |---|---|---|---|---|---|---|---|
-| **Jama Masjid to Delhi Gate** | 20.5 min | 23.8 min | 80.0% | 23.5% | 56.5 percentage points (70.6% relative cut) | 44.7 °C vs 44.5 °C | Amazon Location Service |
 | **Jama Masjid to Raj Ghat** | 30.2 min | 35.5 min | 59.0% | 9.5% | 49.5 percentage points (83.9% relative cut) | 43.9 °C vs 42.0 °C (-1.9 °C) | Amazon Location Service |
+| **Jama Masjid to Delhi Gate** | 20.5 min | 23.8 min | 80.0% | 23.5% | 56.5 percentage points (70.6% relative cut) | 44.7 °C vs 44.5 °C (-0.2 °C) | Amazon Location Service |
 | **Delhi Gate to Lahori Gate** | 40.2 min | 44.8 min | 90.3% | 15.0% | 75.3 percentage points (83.4% relative cut) | 45.3 °C vs 44.9 °C (-0.4 °C) | Amazon Location Service |
 
 ## Performance and cost
@@ -2157,28 +2280,30 @@ flowchart LR
 1. **Scoring.** A Python pipeline samples the satellite rasters every 15 m along each street segment (183,616 points sampled, 0.0% missing data) and builds a heat index from normalized surface temperature (60%) and lack of vegetation (40%).
 2. **Iceberg & Athena.** The scored segments are stored as an **Apache Iceberg table on Amazon S3** (`coolwalk.segments`) and queried with **Amazon Athena** to generate the 150 m heat grid layer (2,092 cells) and statistical findings.
 3. **Heat-aware routing.** A **Lambda** function runs an A* algorithm where each street segment costs `length_m * (1 + alpha * heat_index)`, bounded by a maximum detour threshold. The service computes routes in ~50 ms of routing compute and returns both the heat index profile and mean physical surface temperature (`mean_lst_c`).
-4. **Location services & frontend.** The single-page application uses **Amazon Location Service (v2)** for the Light style base map, auto-suggest place search, and the baseline pedestrian route. Both the standard route and CoolWalk route are rendered with color-coded heat strips. The site is deployed with HTTPS via **AWS Amplify Hosting** backed by Amazon S3 and an Amazon API Gateway HTTP API.
+4. **Location services & frontend.** The single-page application uses **Amazon Location Service (v2)** for the Light style base map, auto-suggest place search, and the baseline pedestrian route. Both the standard route and CoolWalk route are rendered with color-coded heat strips. The site is deployed with HTTPS via **AWS Amplify Hosting** and an Amazon API Gateway HTTP API.
 
 ## What you can explore
 
 - Click any two points in central Delhi, search for landmarks (e.g. "India Gate", "Chandni Chowk"), or click the preset walk buttons.
 - Drag the "How much to avoid heat" slider between fastest and coolest.
 - Toggle the heat map layer and inspect the heat strip underneath each route comparing thermal exposure and average surface temperature.
+- Hover and scrub along the 48-bin heat strip to project the exact distance-interpolated location along the route polyline on the map.
+- Click any street name in the "What the data shows" panel to fly the camera directly to that street and inspect its measured surface temperature.
 - Share walk URLs directly with URL parameters (`#a=lon,lat&b=lon,lat&alpha=...`).
 
 ## What the data shows
 
 - **19.8% of street length** (471.4 km of 2,376.9 km) in central Delhi runs in high-heat zones (heat index >= 0.66).
-- **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones** (44.7 °C mean surface temp). CoolWalk takes 23.8 minutes (+3.3 min) but slashes high-heat exposure down to **23.5%** (44.5 °C mean surface temp) — **avoiding 56.5 percentage points of high-heat exposure** (a 70.6% relative reduction).
-- **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones (43.9 °C mean surface temp). CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** while lowering mean surface temperature to **42.0 °C** — **avoiding 49.5 percentage points of high-heat exposure** (an 83.9% relative cut) and dropping average surface temperature by 1.9 °C.
-- **Delhi Gate to Lahori Gate:** The standard pedestrian walk along Netaji Subhash Marg takes 40.2 minutes through dense commercial corridors with **90.3% in high-heat zones** (45.3 °C mean surface temp). CoolWalk takes 44.8 minutes (+4.6 min) and avoids **75.3 percentage points of high-heat exposure**, cutting high-heat time to just **15.0%** (an 83.4% relative cut) and reducing average surface temperature to 44.9 °C.
+- **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones (43.9 °C mean surface temp). CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** while lowering mean surface temperature to **42.0 °C** — **avoiding 49.5 percentage points of high-heat exposure** (an 83.9% relative cut) and dropping average surface temperature by a significant **1.9 °C**.
+- **Jama Masjid to Delhi Gate:** The standard Amazon Location walk takes 20.5 minutes with **80.0% of the walk in high-heat zones** (44.7 °C mean surface temp). CoolWalk takes 23.8 minutes (+3.3 min) and slashes high-heat zone exposure down to **23.5%** (a 56.5 percentage-point drop) by choosing greener, tree-canopied corridors. While the average surface temperature barely changes (44.7 °C vs 44.5 °C), the route is noticeably greener and avoids the sustained thermal mass of unshaded market corridors.
+- **Delhi Gate to Lahori Gate:** The standard pedestrian walk between Delhi Gate and Lahori Gate takes 40.2 minutes through dense commercial corridors with **90.3% in high-heat zones** (45.3 °C mean surface temp). CoolWalk takes 44.8 minutes (+4.6 min) and avoids **75.3 percentage points of high-heat exposure**, cutting high-heat time to just **15.0%** (an 83.4% relative cut) and reducing average surface temperature to 44.9 °C.
 - **Hottest streets:** Dense commercial alleys in Shahjahanabad: Chipwara Khurd (heat 0.934, LST 46.1 °C), Kinari Bazar (0.914, 46.2 °C), Maliwara (0.895, 46.3 °C), Chipwara Kalan (0.892, 46.4 °C), and Chandni Chowk (0.754, 46.2 °C).
-- **Coolest streets:** Tree-lined boulevards in New Delhi: Akbar Road (heat 0.042–0.159, LST 40.6–41.9 °C), Teen Murti Marg (heat 0.068–0.217, LST 41.0–42.5 °C), and Janpath Lane (heat 0.192, LST 42.2 °C, NDVI 0.935). Akbar Road runs about 4 to 5 °C cooler than unshaded commercial corridors in Old Delhi.
+- **Coolest streets:** Tree-lined boulevards in New Delhi: Akbar Road (heat 0.042–0.159, LST 40.6–41.9 °C), Teen Murti Marg (heat 0.068–0.217, LST 41.0–42.5 °C), and Janpath Lane (heat 0.192, LST 42.2 °C, NDVI 0.935). Akbar Road runs about 4 to 6 °C cooler on average than unshaded commercial corridors in Old Delhi (Akbar Road 40.6 °C vs Chandni Chowk 46.2 °C). Complete queries and outputs are recorded in `docs/SANITY_CHECK_REPRODUCE.md`.
 
 ## Performance and infrastructure
 
 - **Routing latency:** ~50 ms of pure A* routing compute on AWS Lambda (Python 3.12, 2048 MB memory). Client warm roundtrip latency is ~1.0 s; cold start is 3.12 s as the graph index loads from S3.
-- **API security & throttling:** The Amazon API Gateway HTTP API enforces default rate limits (20 req/s, 50 burst) to guard against bot exhaustion. The Amazon Location Service API key is restricted strictly to Maps, Places, and Routes v2 in `us-east-1` with HTTP referer restrictions.
+- **API security & throttling:** The Amazon API Gateway HTTP API enforces configured rate limits (20 req/s, 50 burst) to guard against bot exhaustion. The Amazon Location Service API key is restricted strictly to Maps, Places, and Routes v2 in `us-east-1` with HTTP referer restrictions and an expiration date of December 15, 2026.
 - **Total run cost:** < $0.05 total (Athena queries scanned < 5 MB, S3 requests negligible, Lambda within free tier).
 
 ## Reuse the pattern
@@ -2297,6 +2422,102 @@ print(grp.round({'mean_lst': 1, 'min_lst': 1, 'max_lst': 1, 'mean_ndvi': 3, 'mea
 ```
 
 ### `README.md`
+```markdown
+# CoolWalk
+
+A walking map for central Delhi that trades a few minutes for much less time in the heat. Pick two points and CoolWalk shows the standard walk next to a cooler one, with a heat strip along each route and the average surface temperature avoided.
+
+Built for the AWS Builder Center "Weekend Challenge: Map It".
+
+**Live demo:** [https://main.d3miw0zrayytbj.amplifyapp.com](https://main.d3miw0zrayytbj.amplifyapp.com)  
+**Video:** [YouTube Demo Link - Human to insert]
+
+![CoolWalk Routed Walk](docs/screenshots/02_routed_walk.png)
+
+## How it works
+
+```mermaid
+flowchart LR
+  L8[Landsat 8/9 surface temperature<br/>requester-pays S3 bucket] --> P[Python pipeline<br/>scores 35k segments]
+  S2[Sentinel-2 NDVI<br/>S3 open data] --> P
+  OSM[OpenStreetMap walk network] --> P
+  P --> ICE[(Apache Iceberg table<br/>on Amazon S3 via Athena)]
+  ICE -->|Athena queries| ASSETS[Heat grid & findings]
+  P --> GRAPH[Routing graph on S3]
+  GRAPH --> LAM[AWS Lambda<br/>heat-weighted A*]
+  ASSETS --> HOST[AWS Amplify Hosting<br/>HTTPS frontend]
+  LAM <--> API[Amazon API Gateway HTTP API<br/>throttled & CORS-enabled]
+  HOST <--> API
+  HOST --> ALS[Amazon Location Service<br/>maps, place search, routes]
+```
+
+1. **Data.** Landsat Collection 2 Level-2 surface temperature (`LC08_L2SP_147040_20260609_02_T1` from the USGS requester-pays S3 bucket on AWS Open Data), Sentinel-2 L2A red and near-infrared bands (for vegetation), and the OpenStreetMap walking network. One clear pre-monsoon day (June 2026), shown in the app footer.
+2. **Heat index.** For each street segment: `0.6 x surface temperature + 0.4 x lack of vegetation`, both normalized 0 to 1 across the area. It shows where streets hold heat.
+3. **Iceberg and Athena.** Segment scores are stored as an Apache Iceberg table on S3 (`coolwalk.segments`). Athena produces the heat grid layer and statistical findings.
+4. **Routing.** An AWS Lambda function runs A* where a segment costs `length x (1 + alpha x heat)`. The service computes routes in ~50 ms of routing compute, returning both heat exposure and physical surface temperature (`mean_lst_c`). A detour cap keeps the cooler walk reasonable. The "standard" walk is the Amazon Location Service pedestrian route, scored against the same thermal data, with our network shortest path as a fallback.
+5. **Map & Place Search.** MapLibre on an Amazon Location Service Light basemap. Place search uses Amazon Location Places v2 with autocomplete.
+6. **Hosting & Security.** Deployed with full HTTPS on AWS Amplify Hosting, backed by an Amazon API Gateway HTTP API with configured rate and burst throttling (20 req/s, 50 burst).
+
+## Screenshots
+
+| Desktop View | Mobile (390 px) |
+|---|---|
+| ![Desktop View](docs/screenshots/01_first_view.png) | ![Mobile View](docs/screenshots/03_phone_layout.png) |
+
+## Run it
+
+Prerequisites: Python 3.11+, AWS CLI and SAM CLI configured, an AWS account with an active budget alert, Node not required.
+
+```bash
+# 1. Setup virtual environment
+python -m venv .venv
+# Linux / macOS: source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r pipeline/requirements.txt
+
+# 2. Deploy AWS infrastructure
+# Windows:
+powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
+# Linux / macOS:
+export AWS_REGION=us-east-1
+export MAP_API_KEY=...
+./scripts/deploy.sh
+
+# 3. Run data pipeline
+export COOLWALK_BUCKET=<DataBucket from deploy output>
+python pipeline/01_pick_scenes.py    # choose Landsat + Sentinel-2 scenes
+python pipeline/02_score_segments.py # score every street segment
+python pipeline/03_build_iceberg.py  # Iceberg table via Athena
+python pipeline/04_export_assets.py  # heat grid, findings, router graph
+
+# 4. Deploy frontend to AWS Amplify (HTTPS)
+# Packages frontend/ and deploys to AWS Amplify Hosting
+powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
+```
+
+## Reuse it for your city
+
+To adapt CoolWalk for another city:
+1. Change `BBOX` and `DATE_RANGE` in `pipeline/config.py`.
+2. Update the `bbox` and `PRESETS` in `frontend/index.html`.
+3. Pick a clear, hot summer season with minimal cloud cover.
+4. Run the pipeline scripts and re-deploy.
+
+## Known limits
+
+- **Heat index evaluation:** CoolWalk optimizes a heat index and compares routes against that index. To provide an objective physical baseline, CoolWalk also calculates and displays mean surface temperature (`mean_lst_c`) along each route.
+- **Satellite thermal proxy:** Heat comes from a dated satellite scene (June 2026). Landsat's thermal band is 100 m native resolution (resampled to 30 m), so we blend it with 10 m Sentinel-2 vegetation to distinguish shaded streets from unshaded ones.
+- **Surface temperature:** Surface temperature is a proxy for how hot a street surface feels underfoot and radiative heat. It ignores momentary wind, humidity, microscale building shade geometry, and time of day.
+- **Walking pace:** Walking time assumes a constant 1.35 m/s speed everywhere.
+- **Coverage:** Central Delhi (Old Delhi to Lodhi Garden).
+
+## Data credits
+
+Landsat data courtesy of the U.S. Geological Survey. Contains modified Copernicus Sentinel data. Street data from OpenStreetMap contributors (ODbL). Base map, geocoding and pedestrian routing via Amazon Location Service.
+
+## License
+
+MIT.
 ```markdown
 # CoolWalk
 

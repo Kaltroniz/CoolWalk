@@ -123,7 +123,7 @@ def main():
     })
     seg.to_parquet(config.WORK / "segments.parquet", index=False)
 
-    # compact routing graph
+    # compact routing graph: edge schema [u, v, length, heat, edge_id, lst_c, ndvi]
     ids = pd.unique(pd.concat([seg.u, seg.v]))
     index = {int(n): i for i, n in enumerate(ids)}
     node_xy = [[round(float(nodes.loc[n, "x"]), 6), round(float(nodes.loc[n, "y"]), 6)] for n in ids]
@@ -134,7 +134,7 @@ def main():
         if (coords[0][0] - u_xy[0]) ** 2 + (coords[0][1] - u_xy[1]) ** 2 > \
            (coords[-1][0] - u_xy[0]) ** 2 + (coords[-1][1] - u_xy[1]) ** 2:
             coords.reverse()                                          # make geometry run u -> v
-        g_edges.append([index[int(row.u)], index[int(row.v)], float(row.length_m), float(row.heat_index), int(row.edge_id), float(row.lst_c)])
+        g_edges.append([index[int(row.u)], index[int(row.v)], float(row.length_m), float(row.heat_index), int(row.edge_id), float(row.lst_c), float(row.ndvi)])
         g_geoms.append(coords)
     meta = {"bbox": list(config.BBOX), "landsat_date": sc["landsat"]["date"], "landsat_id": sc["landsat"]["id"],
             "sentinel_date": sc["sentinel"]["date"], "weights": {"lst": config.W_LST, "veg": config.W_VEG},

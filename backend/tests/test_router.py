@@ -8,7 +8,7 @@ import app  # noqa: E402
 LON0, LAT0, STEP = 77.2000, 28.6000, 0.001  # ~100 m grid
 
 
-def make_graph(cols=12, rows=3, hot_row=0, cool_row=2):
+def make_graph(cols=12, rows=3, hot_row=0, cool_row=2, edge_len=7):
     """rows are horizontal streets; the direct row is hot, the far row is cool."""
     nodes, idx = [], {}
     for r in range(rows):
@@ -17,20 +17,26 @@ def make_graph(cols=12, rows=3, hot_row=0, cool_row=2):
             nodes.append([LON0 + c * STEP, LAT0 + r * STEP])
     edges, geoms = [], []
 
-    def add(a, b, heat, lst):
+    def add(a, b, heat, lst, ndvi):
         for u, v in ((a, b), (b, a)):
             length = app.dist_m(*nodes[u], *nodes[v])
-            edges.append([u, v, length, heat, len(edges), lst])
+            edge = [u, v, length, heat, len(edges)]
+            if edge_len >= 6:
+                edge.append(lst)
+            if edge_len >= 7:
+                edge.append(ndvi)
+            edges.append(edge)
             geoms.append([nodes[u], nodes[v]])
 
     for r in range(rows):
         heat = 0.95 if r == hot_row else (0.05 if r == cool_row else 0.5)
         lst = 46.0 if r == hot_row else (38.0 if r == cool_row else 42.0)
+        ndvi = 0.1 if r == hot_row else (0.8 if r == cool_row else 0.4)
         for c in range(cols - 1):
-            add(idx[(c, r)], idx[(c + 1, r)], heat, lst)
+            add(idx[(c, r)], idx[(c + 1, r)], heat, lst, ndvi)
     for c in (0, cols - 1):  # only the two ends connect the streets
         for r in range(rows - 1):
-            add(idx[(c, r)], idx[(c, r + 1)], 0.5, 42.0)
+            add(idx[(c, r)], idx[(c, r + 1)], 0.5, 42.0, 0.4)
     meta = {"bbox": [LON0 - 0.001, LAT0 - 0.001, LON0 + cols * STEP, LAT0 + rows * STEP]}
     return app.build({"nodes": nodes, "edges": edges, "geoms": geoms, "meta": meta})
 
@@ -44,6 +50,7 @@ def test_alpha_zero_is_shortest():
     assert abs(m["length_m"] - 11 * app.dist_m(LON0, LAT0, LON0 + STEP, LAT0)) < 1.0
     assert m["hot_share"] == 1.0  # the direct street is the hot one
     assert m["mean_lst_c"] == 46.0
+    assert m["mean_ndvi"] == 0.1
 
 
 def test_cool_route_avoids_heat_with_bounded_detour():
@@ -53,6 +60,7 @@ def test_cool_route_avoids_heat_with_bounded_detour():
     assert out["cool"]["hot_share"] < out["shortest"]["hot_share"]
     assert out["cool"]["mean_heat"] < out["shortest"]["mean_heat"]
     assert out["cool"]["mean_lst_c"] < out["shortest"]["mean_lst_c"]
+    assert out["cool"]["mean_ndvi"] > out["shortest"]["mean_ndvi"]
     assert out["cool"]["length_m"] <= out["shortest"]["length_m"] * 1.8
     assert out["cool"]["minutes"] > out["shortest"]["minutes"]
     assert len(out["cool"]["profile"]) == app.BINS
@@ -73,6 +81,21 @@ def test_score_line_matches_streets():
     assert hot["coverage"] > 0.9 and cool["coverage"] > 0.9
     assert hot["mean_heat"] > 0.9 and cool["mean_heat"] < 0.1
     assert hot["mean_lst_c"] > cool["mean_lst_c"]
+    assert hot["mean_ndvi"] < cool["mean_ndvi"]
+
+
+def test_backward_compatible_legacy_graph():
+    # 5-element edges (no lst, no ndvi)
+    g5 = make_graph(edge_len=5)
+    out5 = app.route(g5, {"origin": [LON0, LAT0], "destination": [LON0 + 11 * STEP, LAT0], "alpha": 3})
+    assert out5["cool"]["mean_lst_c"] is None
+    assert out5["cool"]["mean_ndvi"] is None
+
+    # 6-element edges (lst only)
+    g6 = make_graph(edge_len=6)
+    out6 = app.route(g6, {"origin": [LON0, LAT0], "destination": [LON0 + 11 * STEP, LAT0], "alpha": 3})
+    assert out6["cool"]["mean_lst_c"] is not None
+    assert out6["cool"]["mean_ndvi"] is None
 
 
 def test_validation_errors():

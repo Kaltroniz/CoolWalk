@@ -61,7 +61,7 @@ def build(data):
     nodes, edges, geoms = data["nodes"], data["edges"], data["geoms"]
     adj = [[] for _ in nodes]
     for i, e in enumerate(edges):
-        u, v, length, heat, _eid = e[:5]          # a 6th item, if present, is mean surface temp (C)
+        u, v, length, heat, _eid = e[:5]          # 6th is lst_c, 7th is ndvi if present
         adj[u].append((v, length, heat, i))
     node_grid = {}
     for i, (lon, lat) in enumerate(nodes):
@@ -69,8 +69,9 @@ def build(data):
     pt_grid = {}
     for i, e in enumerate(edges):
         lst = e[5] if len(e) > 5 else None
+        ndvi = e[6] if len(e) > 6 else None
         for lon, lat in densify(geoms[i]):
-            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst))
+            pt_grid.setdefault(cell(lon, lat), []).append((lon, lat, e[3], lst, ndvi))
     return {"nodes": nodes, "edges": edges, "geoms": geoms, "adj": adj,
             "node_grid": node_grid, "pt_grid": pt_grid, "meta": data.get("meta", {})}
 
@@ -152,15 +153,17 @@ def _round_line(line):
     return [[round(x, 5), round(y, 5)] for x, y in line]
 
 
-def _finish(length_m, heats, profile, line=None, extra=None, lsts=None):
+def _finish(length_m, heats, profile, line=None, extra=None, lsts=None, ndvis=None):
     known = [h for h in heats if h is not None]
     known_lst = [t for t in (lsts or []) if t is not None]
+    known_ndvi = [v for v in (ndvis or []) if v is not None]
     out = {
         "length_m": round(length_m, 1),
         "minutes": round(length_m / WALK_MPS / 60.0, 1),
         "mean_heat": round(sum(known) / len(known), 3) if known else None,
         "hot_share": round(sum(1 for h in known if h >= HOT_T) / len(known), 3) if known else None,
         "mean_lst_c": round(sum(known_lst) / len(known_lst), 1) if known_lst else None,
+        "mean_ndvi": round(sum(known_ndvi) / len(known_ndvi), 3) if known_ndvi else None,
         "profile": [None if p is None else round(p, 3) for p in profile],
     }
     if line is not None:
@@ -172,7 +175,7 @@ def _finish(length_m, heats, profile, line=None, extra=None, lsts=None):
 
 def path_metrics(g, eis):
     edges, geoms = g["edges"], g["geoms"]
-    line, cum, total, per_edge, per_lst = [], [], 0.0, [], []
+    line, cum, total, per_edge, per_lst, per_ndvi = [], [], 0.0, [], [], []
     for ei in eis:
         gm = geoms[ei]
         line.extend(gm if not line else gm[1:])
@@ -180,39 +183,45 @@ def path_metrics(g, eis):
         cum.append(total)
         per_edge.append(edges[ei][3])
         per_lst.append(edges[ei][5] if len(edges[ei]) > 5 else None)
+        per_ndvi.append(edges[ei][6] if len(edges[ei]) > 6 else None)
     # length-weighted heat samples at 5 m spacing for stable shares
-    heats, lsts, prev = [], [], 0.0
-    for c, h, t in zip(cum, per_edge, per_lst):
+    heats, lsts, ndvis, prev = [], [], [], 0.0
+    for c, h, t, v in zip(cum, per_edge, per_lst, per_ndvi):
         n = max(1, int((c - prev) // 5))
         heats.extend([h] * n)
         lsts.extend([t] * n)
+        ndvis.extend([v] * n)
         prev = c
     profile = []
     for k in range(BINS):
         d = (k + 0.5) / BINS * total
         profile.append(per_edge[min(bisect.bisect_left(cum, d), len(per_edge) - 1)])
-    return _finish(total, heats, profile, line, lsts=lsts)
+    return _finish(total, heats, profile, line, lsts=lsts, ndvis=ndvis)
 
 
 def score_line(g, line):
     pts = list(densify([tuple(p) for p in line]))
-    heats, lsts = [], []
+    heats, lsts, ndvis = [], [], []
     for lon, lat in pts:
         cx, cy = cell(lon, lat)
         best = None
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                for plon, plat, h, lst in g["pt_grid"].get((cx + dx, cy + dy), ()):
+                for pt_tuple in g["pt_grid"].get((cx + dx, cy + dy), ()):
+                    plon, plat, h = pt_tuple[:3]
+                    lst = pt_tuple[3] if len(pt_tuple) > 3 else None
+                    ndvi = pt_tuple[4] if len(pt_tuple) > 4 else None
                     d = dist_m(lon, lat, plon, plat)
                     if d <= MATCH_M and (best is None or d < best[0]):
-                        best = (d, h, lst)
+                        best = (d, h, lst, ndvi)
         heats.append(best[1] if best else None)
         lsts.append(best[2] if best else None)
+        ndvis.append(best[3] if best else None)
     length = sum(dist_m(a[0], a[1], b[0], b[1]) for a, b in zip(line, line[1:]))
     profile = [heats[min(int((k + 0.5) / BINS * len(heats)), len(heats) - 1)] for k in range(BINS)] if heats else []
     matched = sum(1 for h in heats if h is not None)
     return _finish(length, heats, profile, None,
-                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts)
+                   {"coverage": round(matched / len(heats), 3) if heats else 0.0}, lsts=lsts, ndvis=ndvis)
 
 
 # ---------------------------------------------------------------- handlers

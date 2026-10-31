@@ -8,9 +8,33 @@ import zipfile
 import boto3
 
 REGION = os.getenv("AMPLIFY_REGION", "us-east-2")
-APP_ID = os.getenv("AMPLIFY_APP_ID", "d3miw0zrayytbj")
 BRANCH = os.getenv("AMPLIFY_BRANCH", "main")
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+
+def get_app_id(amp):
+    app_id = os.getenv("AMPLIFY_APP_ID")
+    if app_id:
+        return app_id
+    print("AMPLIFY_APP_ID is not set; checking for existing app or creating a new Amplify app...")
+    apps = amp.list_apps().get("apps", [])
+    matches = [a for a in apps if a.get("name") == "coolwalk"]
+    if matches:
+        app_id = matches[0]["appId"]
+        print(f"Found existing Amplify app 'coolwalk' with ID: {app_id}")
+    else:
+        created = amp.create_app(name="coolwalk", platform="WEB")
+        app_id = created["app"]["appId"]
+        print(f"Created new Amplify app 'coolwalk' with ID: {app_id}")
+
+    try:
+        amp.get_branch(appId=app_id, branchName=BRANCH)
+    except Exception:
+        print(f"Creating branch '{BRANCH}' on app {app_id}...")
+        amp.create_branch(appId=app_id, branchName=BRANCH)
+
+    print(f"AMPLIFY_APP_ID={app_id}")
+    return app_id
 
 
 def main():
@@ -26,8 +50,10 @@ def main():
     print(f"Created zip ({len(zip_bytes):,} bytes).")
 
     amp = boto3.client("amplify", region_name=REGION)
-    print(f"Creating deployment on Amplify App {APP_ID} ({BRANCH})...")
-    dep = amp.create_deployment(appId=APP_ID, branchName=BRANCH)
+    app_id = get_app_id(amp)
+
+    print(f"Creating deployment on Amplify App {app_id} ({BRANCH})...")
+    dep = amp.create_deployment(appId=app_id, branchName=BRANCH)
     job_id = dep["jobId"]
     upload_url = dep["zipUploadUrl"]
 
@@ -39,16 +65,16 @@ def main():
             sys.exit(f"Upload failed: {resp.status}")
 
     print(f"Starting deployment job {job_id}...")
-    amp.start_deployment(appId=APP_ID, branchName=BRANCH, jobId=job_id)
+    amp.start_deployment(appId=app_id, branchName=BRANCH, jobId=job_id)
 
     print("Waiting for deployment to succeed...")
     for _ in range(30):
         time.sleep(3)
-        job = amp.get_job(appId=APP_ID, branchName=BRANCH, jobId=job_id)
+        job = amp.get_job(appId=app_id, branchName=BRANCH, jobId=job_id)
         status = job["job"]["summary"]["status"]
         print(f"Job {job_id} status: {status}")
         if status == "SUCCEED":
-            url = f"https://{BRANCH}.{APP_ID}.amplifyapp.com"
+            url = f"https://{BRANCH}.{app_id}.amplifyapp.com"
             print(f"\nSuccessfully deployed to Amplify: {url}")
             return
         if status in ("FAILED", "CANCELLED"):

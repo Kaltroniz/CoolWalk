@@ -29,10 +29,8 @@ foreach ($o in $stackDesc.Stacks[0].Outputs) {
 }
 
 $apiUrl = $outputs["ApiUrl"]
-$siteBucket = $outputs["SiteBucket"]
-$siteUrl = $outputs["SiteUrl"]
 $dataBucket = $outputs["DataBucket"]
-$distId = $outputs["DistributionId"]
+$amplifyUrl = $outputs["AmplifyUrl"]
 
 $cfg = @"
 window.COOLWALK = {
@@ -45,17 +43,10 @@ window.COOLWALK = {
 
 Set-Content -Path (Join-Path $root "frontend\config.js") -Value $cfg -NoNewline
 
-aws s3 sync (Join-Path $root "frontend") "s3://$siteBucket/" --delete --region $Region
-if ($distId) {
-    aws cloudfront create-invalidation --distribution-id $distId --paths "/*"
-}
-
 # Deploy to AWS Amplify Hosting (provides managed HTTPS)
 python (Join-Path $root "scripts\deploy_amplify.py")
 
 Write-Host ""
-Write-Host "Amplify:     https://main.d3miw0zrayytbj.amplifyapp.com"
-Write-Host "S3 fallback: $siteUrl"
+Write-Host "Amplify:     $amplifyUrl"
 Write-Host "API:         $apiUrl"
 Write-Host "Data bucket: $dataBucket   (`$env:COOLWALK_BUCKET = '$dataBucket')"
-
