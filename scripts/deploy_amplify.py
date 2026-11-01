@@ -7,8 +7,8 @@ import urllib.request
 import zipfile
 import boto3
 
-REGION = os.getenv("AMPLIFY_REGION", "us-east-2")
-BRANCH = os.getenv("AMPLIFY_BRANCH", "main")
+REGION = os.getenv("AMPLIFY_REGION", "us-east-2").strip()
+BRANCH = os.getenv("AMPLIFY_BRANCH", "main").strip()
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 

@@ -10,7 +10,7 @@ Walking directions optimize for distance. In a Delhi summer with temperatures so
 
 - **Landsat 8/9 Collection 2 Level-2 surface temperature**, scene `LC08_L2SP_147040_20260609_02_T1` from June 9, 2026, accessed from the USGS Landsat requester-pays S3 bucket in the AWS Registry of Open Data. Cloud cover: **0.0%**. Surface temperature across the study area spans **40.3 °C to 46.3 °C** (5th to 95th percentile).
 - **Sentinel-2 L2A red and near-infrared bands**, from June 7, 2026 (`S2B_43RGM_20260607_0_L2A`), accessed from AWS Open Data and used to compute high-resolution 10 m vegetation index (NDVI).
-- **OpenStreetMap walking network** for central Delhi: **35,748 directed street segments** covering **1,188.5 km** of walkable streets (17,644 undirected street segments) and 12,687 intersections.
+- **OpenStreetMap walking network** for central Delhi: **35,748 directed street segments** covering **1,188.5 km** of street (17,644 distinct intersection pairs) and 12,687 intersections.
 
 All data is open and contains no personal information.
 
@@ -51,12 +51,12 @@ flowchart LR
 
 ## What the data shows
 
-- **Headline benchmark (500 random trips across Delhi):**
-  - **On heat-exposed walks (shortest walk $\ge 50\%$ in high-heat zones; 62 trips, median 41 min):** CoolWalk avoids a median of **9.0 minutes in intense high-heat zones** (a **21.5 percentage-point drop**, mean 25.6 pp) for a median detour of just **1.0 extra minute** (3.3% distance detour). **89% of heat-exposed walks cut high-heat exposure by 5 percentage points or more**.
-  - **Across all 500 trips (network-wide baseline, median 44 min):** A median detour of just **1.0 extra minute** (+2.4% distance) avoids **1.0 minute in high-heat zones** (cutting high-heat share by 2.7 percentage points). 42% of trips achieve a high-heat reduction of 5 percentage points or greater, while 41% of trips make no real difference (in leafy residential neighborhoods where the shortest path is already cool).
-- **Independent multi-date validation:** Routing on one satellite scene risks overfitting to that date's thermal patterns. We evaluated all 500 benchmark trips against three held-out Landsat scenes spanning different pre-monsoon dates: June 17, 2026 (`LC09`), May 17, 2026 (`LC08`), and April 23, 2026 (`LC09`). CoolWalk consistently delivers a **0.2 to 0.3 °C median surface temperature reduction** across all held-out dates, corroborating that cooler corridors remain consistently cooler across different pre-monsoon dates.
+- **Headline benchmark (2,000 random trips across Delhi):**
+  - **On heat-exposed walks (shortest walk $\ge 50\%$ in high-heat zones, about 1 in 7 random walks here; 297 trips, median 41 min):** CoolWalk avoids a median of **9.3 minutes in intense high-heat zones** (a **24.5 percentage-point drop**, mean 25.2 pp) for a median detour of just **1.3 extra minutes** (3.2% distance detour). **86% of heat-exposed walks cut high-heat exposure by 5 percentage points or more**.
+  - **Across all 2,000 trips (network-wide baseline, median 43 min):** A median detour of just **0.9 extra minutes** (+2.2% distance) avoids **1.1 minutes in high-heat zones** (cutting high-heat share by 2.8 percentage points). 43% of trips achieve a high-heat reduction of 5 percentage points or greater, while 41% of trips make no real difference (in leafy residential neighborhoods where the shortest path is already cool).
+- **Independent multi-date validation:** Routing on one satellite scene risks overfitting to that date's thermal patterns. We evaluated all 2,000 benchmark trips against three held-out Landsat scenes spanning different pre-monsoon dates: June 17, 2026 (`LC09`), May 17, 2026 (`LC08`), and April 23, 2026 (`LC09`). CoolWalk consistently delivers a **0.2 to 0.3 °C median surface temperature reduction** across all held-out dates, corroborating that cooler corridors remain consistently cooler across different pre-monsoon dates.
 - **Civic infrastructure in the heat:** Cross-referencing 974 open civic points in Delhi with satellite heat revealed significant vulnerabilities: **24 of 73 hospitals and clinics (32.9%)**, **17 of 85 schools (20.0%)**, and **23 of 353 bus stops (6.5%)** sit on streets in high-heat zones.
-- **Where shade matters most (Civic Planner View):** An Amazon Athena spatial query cross-referenced high-heat corridors ($\text{heat} \ge 0.66$) with nearby civic facilities within 150 m. The analysis identified 20 priority corridors where pedestrians face unavoidable heat exposure, led by Netaji Subhash Marg (3.6 km hot segments near 5 schools and 8 bus stops), Rani Jhansi Road (4.3 km hot near 3 schools, 1 clinic, and 9 bus stops), and Chitragupta Road (1.3 km hot near 3 schools and 2 clinics). The full dataset is exportable directly from the map interface as CSV.
+- **Where shade matters most (Civic Planner View):** An Amazon Athena spatial query cross-referenced high-heat corridors ($\text{heat} \ge 0.66$) with nearby civic facilities within 150 m. The analysis identified 20 priority corridors where pedestrians face unavoidable heat exposure, led by Netaji Subhash Marg (1.8 km hot segments near 5 schools and 8 bus stops), Rani Jhansi Road (2.0 km hot near 3 schools, 1 clinic, and 9 bus stops), and Chitragupta Road (0.6 km hot near 3 schools and 2 clinics). The full dataset is exportable directly from the map interface as CSV.
 - **Cool-refuge finder:** CoolWalk embeds 463 public parks, water points, and metro stations into the routing graph, allowing pedestrians in the heat to find their nearest cool refuge via the coolest walking path.
 - **19.8% of street length** (235.6 km of 1,188.5 km) in central Delhi runs in high-heat zones (heat index >= 0.66).
 - **Jama Masjid to Raj Ghat:** The standard walk takes 30.2 minutes with **59.0%** in high-heat zones (43.9 °C mean surface temp). CoolWalk takes 35.5 minutes (+5.3 min) and cuts high-heat exposure down to just **9.5%** while lowering mean surface temperature to **42.0 °C** — **avoiding 49.5 percentage points of high-heat exposure** (an 83.9% relative cut) and dropping average surface temperature by a significant **1.9 °C**.
@@ -75,7 +75,15 @@ flowchart LR
 
 To reuse CoolWalk for any other city:
 1. Update `BBOX` and `DATE_RANGE` in `pipeline/config.py`.
-2. Run the four pipeline scripts (`01_pick_scenes.py` through `04_export_assets.py`).
+2. Run the pipeline scripts in order:
+   - `python pipeline/01_pick_scenes.py` — select clearest pre-monsoon Landsat 8/9 thermal & Sentinel-2 vegetation scenes
+   - `python pipeline/02_score_segments.py` — sample microclimate rasters, score street segments, and construct routing graph
+   - `python pipeline/03_build_iceberg.py` — create and load Apache Iceberg segments table in Amazon Athena
+   - `python pipeline/04_export_assets.py` — query Athena to export heat grid, findings, shade priority, and upload graph to S3
+   - `python pipeline/05_validation.py` — validate thermal persistence against held-out multi-date Landsat scenes
+   - `python pipeline/06_places.py` — fetch OSM civic infrastructure points (parks, metro stations, bus stops, clinics)
+   - `python pipeline/07_build_places_iceberg.py` — create and load Apache Iceberg places table in Amazon Athena
+   - `python pipeline/08_shade_priority.py` — spatial analysis cross-referencing high-heat corridors with civic facilities
 3. Deploy to AWS using `./scripts/deploy.ps1` (or `./scripts/deploy.sh`).
 
 ## Limits, stated plainly

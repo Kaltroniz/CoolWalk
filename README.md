@@ -35,9 +35,9 @@ flowchart LR
 
 ## Screenshots
 
-| Desktop View | Mobile (390 px) |
-|---|---|
-| ![Desktop View](docs/screenshots/01_first_view.png) | ![Mobile View](docs/screenshots/03_phone_layout.png) |
+| Desktop View | Mobile Route | Mobile Map |
+|---|---|---|
+| ![Desktop View](docs/screenshots/01_first_view.png) | ![Mobile Route](docs/screenshots/03_phone_layout.png) | ![Mobile Map](docs/screenshots/03_phone_collapsed.png) |
 
 ## Run it
 
@@ -60,10 +60,14 @@ export MAP_API_KEY=...
 
 # 3. Run data pipeline
 export COOLWALK_BUCKET=<DataBucket from deploy output>
-python pipeline/01_pick_scenes.py    # choose Landsat + Sentinel-2 scenes
-python pipeline/02_score_segments.py # score every street segment
-python pipeline/03_build_iceberg.py  # Iceberg table via Athena
-python pipeline/04_export_assets.py  # heat grid, findings, router graph
+python pipeline/01_pick_scenes.py          # choose Landsat 8/9 thermal & Sentinel-2 vegetation scenes
+python pipeline/02_score_segments.py       # score every street segment and build graph
+python pipeline/03_build_iceberg.py        # Iceberg segments table via Athena
+python pipeline/04_export_assets.py        # heat grid, findings, shade priority, and router graph
+python pipeline/05_validation.py           # multi-date Landsat validation check
+python pipeline/06_places.py               # extract civic infrastructure points
+python pipeline/07_build_places_iceberg.py # Iceberg places table via Athena
+python pipeline/08_shade_priority.py       # civic planner shade priority analysis
 
 # 4. Deploy frontend to AWS Amplify (HTTPS)
 # Packages frontend/ and deploys to AWS Amplify Hosting

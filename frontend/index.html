@@ -447,6 +447,7 @@ h1{
   .verdict{font-size:16.5px}
   .route{padding:10px 12px}
 }
+@media (max-height:900px) and (min-height:721px){ .presets-pills{flex-wrap:wrap;overflow:visible} }
 
 /* ---------- mobile drawer responsiveness ---------- */
 @media (max-width:820px){
@@ -633,7 +634,7 @@ map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-right
 map.addControl(new maplibregl.AttributionControl({compact:true, customAttribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Landsat 8/9 &copy; USGS/NASA | Sentinel-2 &copy; Copernicus'}), 'bottom-right');
 
 const pad = () => matchMedia('(max-width:820px)').matches
-  ? {top:40, left:20, right:20, bottom:Math.round(innerHeight*.58)} : {top:60, bottom:60, right:60, left:460};
+  ? {top:70, left:20, right:20, bottom:Math.round(innerHeight*.64)} : {top:60, bottom:60, right:60, left:460};
 map.fitBounds([[C.bbox[0],C.bbox[1]],[C.bbox[2],C.bbox[3]]], {padding: pad(), duration: 0});
 const emptyLine = {type:'Feature', geometry:{type:'LineString', coordinates:[]}};
 
@@ -823,7 +824,8 @@ function why(cool, std){
   if (dT >= 0.3) parts.push(`${dT.toFixed(1)} °C cooler surface`);
   if (std.mean_ndvi > 0 && cool.mean_ndvi != null) {
     const g = (cool.mean_ndvi - std.mean_ndvi) / std.mean_ndvi;
-    if (g >= 0.1) parts.push(`${Math.round(g * 100)}% more greenery`);
+    const greener = (g) => g >= 1 ? `${(1 + g).toFixed(1)}× the greenery` : `${Math.round(g * 100)}% more greenery`;
+    if (g >= 0.1) parts.push(greener(g));
   }
   return parts.length ? `Why: ${parts.join(' and ')}.`
     : 'Average surface temperature and greenery are similar; the gain is in avoiding the hottest stretches.';

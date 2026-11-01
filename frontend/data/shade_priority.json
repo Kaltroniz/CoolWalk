@@ -2,30 +2,30 @@
   {
     "corridor": "Netaji Subhash Marg",
     "avg_surface_c": 45.9,
-    "avg_heat_index": 0.76,
-    "total_hot_m": 3586,
+    "avg_heat_index": 0.75,
+    "total_hot_m": 1822,
     "bus_stops": 8,
     "schools": 5,
     "hospitals": 0,
-    "lon": 77.23688,
-    "lat": 28.65848
+    "lon": 77.23671,
+    "lat": 28.65325
   },
   {
     "corridor": "Rani Jhansi Road",
-    "avg_surface_c": 46.0,
-    "avg_heat_index": 0.81,
-    "total_hot_m": 4269,
+    "avg_surface_c": 45.9,
+    "avg_heat_index": 0.78,
+    "total_hot_m": 1982,
     "bus_stops": 9,
     "schools": 3,
     "hospitals": 1,
-    "lon": 77.2078,
-    "lat": 28.66418
+    "lon": 77.20639,
+    "lat": 28.66298
   },
   {
     "corridor": "Chitragupta Road",
-    "avg_surface_c": 45.3,
-    "avg_heat_index": 0.8,
-    "total_hot_m": 1262,
+    "avg_surface_c": 45.4,
+    "avg_heat_index": 0.81,
+    "total_hot_m": 639,
     "bus_stops": 6,
     "schools": 3,
     "hospitals": 2,
@@ -34,31 +34,31 @@
   },
   {
     "corridor": "Rani Jhansi Flyover",
-    "avg_surface_c": 45.8,
+    "avg_surface_c": 45.7,
     "avg_heat_index": 0.77,
-    "total_hot_m": 3811,
+    "total_hot_m": 2462,
     "bus_stops": 7,
     "schools": 3,
     "hospitals": 1,
-    "lon": 77.20822,
-    "lat": 28.66483
+    "lon": 77.20467,
+    "lat": 28.6615
   },
   {
     "corridor": "Jawaharlal Nehru Marg",
-    "avg_surface_c": 45.8,
-    "avg_heat_index": 0.73,
-    "total_hot_m": 1519,
+    "avg_surface_c": 45.4,
+    "avg_heat_index": 0.72,
+    "total_hot_m": 751,
     "bus_stops": 7,
     "schools": 0,
     "hospitals": 2,
-    "lon": 77.22368,
-    "lat": 28.64507
+    "lon": 77.22475,
+    "lat": 28.64386
   },
   {
     "corridor": "Bharat Ram Road",
     "avg_surface_c": 44.4,
     "avg_heat_index": 0.75,
-    "total_hot_m": 453,
+    "total_hot_m": 91,
     "bus_stops": 0,
     "schools": 1,
     "hospitals": 5,
@@ -67,75 +67,86 @@
   },
   {
     "corridor": "Asaf Ali Road",
-    "avg_surface_c": 44.6,
-    "avg_heat_index": 0.71,
-    "total_hot_m": 1366,
+    "avg_surface_c": 44.7,
+    "avg_heat_index": 0.72,
+    "total_hot_m": 1231,
     "bus_stops": 5,
     "schools": 1,
     "hospitals": 1,
-    "lon": 77.22486,
-    "lat": 28.64524
+    "lon": 77.23735,
+    "lat": 28.64094
   },
   {
     "corridor": "Maharaja Agrasen Marg",
-    "avg_surface_c": 45.3,
-    "avg_heat_index": 0.74,
-    "total_hot_m": 1022,
+    "avg_surface_c": 45.1,
+    "avg_heat_index": 0.72,
+    "total_hot_m": 424,
     "bus_stops": 2,
     "schools": 3,
     "hospitals": 1,
-    "lon": 77.20401,
-    "lat": 28.65832
+    "lon": 77.20619,
+    "lat": 28.65729
   },
   {
     "corridor": "Dayanand Road",
     "avg_surface_c": 44.9,
     "avg_heat_index": 0.74,
-    "total_hot_m": 423,
+    "total_hot_m": 145,
     "bus_stops": 2,
     "schools": 2,
     "hospitals": 2,
-    "lon": 77.24272,
-    "lat": 28.6448
+    "lon": 77.24106,
+    "lat": 28.64473
   },
   {
     "corridor": "Ansari Road",
     "avg_surface_c": 44.1,
     "avg_heat_index": 0.72,
-    "total_hot_m": 377,
+    "total_hot_m": 248,
     "bus_stops": 0,
     "schools": 1,
     "hospitals": 4,
-    "lon": 77.24445,
-    "lat": 28.64167
+    "lon": 77.24339,
+    "lat": 28.64673
   },
   {
     "corridor": "Mahatma Gandhi Marg",
-    "avg_surface_c": 45.7,
-    "avg_heat_index": 0.79,
-    "total_hot_m": 2953,
+    "avg_surface_c": 45.8,
+    "avg_heat_index": 0.78,
+    "total_hot_m": 4620,
     "bus_stops": 7,
     "schools": 0,
     "hospitals": 0,
-    "lon": 77.25242,
-    "lat": 28.60891
+    "lon": 77.2498,
+    "lat": 28.6163
   },
   {
     "corridor": "Deshbandhu Gupta Road",
-    "avg_surface_c": 45.4,
-    "avg_heat_index": 0.81,
-    "total_hot_m": 707,
+    "avg_surface_c": 45.2,
+    "avg_heat_index": 0.79,
+    "total_hot_m": 1313,
     "bus_stops": 4,
     "schools": 2,
     "hospitals": 0,
-    "lon": 77.20944,
-    "lat": 28.64577
+    "lon": 77.21187,
+    "lat": 28.64544
+  },
+  {
+    "corridor": "Bahadurgarh Road",
+    "avg_surface_c": 46.7,
+    "avg_heat_index": 0.88,
+    "total_hot_m": 1144,
+    "bus_stops": 2,
+    "schools": 2,
+    "hospitals": 1,
+    "lon": 77.21255,
+    "lat": 28.66092
   },
   {
     "corridor": "Bhavbhuti Marg",
-    "avg_surface_c": 45.8,
+    "avg_surface_c": 45.7,
     "avg_heat_index": 0.68,
-    "total_hot_m": 1113,
+    "total_hot_m": 252,
     "bus_stops": 5,
     "schools": 0,
     "hospitals": 1,
@@ -143,32 +154,21 @@
     "lat": 28.64249
   },
   {
-    "corridor": "Bahadurgarh Road",
-    "avg_surface_c": 46.5,
-    "avg_heat_index": 0.86,
-    "total_hot_m": 885,
-    "bus_stops": 2,
-    "schools": 2,
-    "hospitals": 1,
-    "lon": 77.20743,
-    "lat": 28.66221
-  },
-  {
     "corridor": "Galli Number 1",
     "avg_surface_c": 45.5,
-    "avg_heat_index": 0.81,
-    "total_hot_m": 582,
+    "avg_heat_index": 0.82,
+    "total_hot_m": 400,
     "bus_stops": 3,
     "schools": 1,
     "hospitals": 1,
-    "lon": 77.20919,
-    "lat": 28.6463
+    "lon": 77.21195,
+    "lat": 28.64576
   },
   {
     "corridor": "Galli Number 2",
     "avg_surface_c": 45.3,
-    "avg_heat_index": 0.76,
-    "total_hot_m": 576,
+    "avg_heat_index": 0.79,
+    "total_hot_m": 398,
     "bus_stops": 3,
     "schools": 1,
     "hospitals": 1,
@@ -177,9 +177,9 @@
   },
   {
     "corridor": "Ilahi Bux Marg",
-    "avg_surface_c": 44.7,
-    "avg_heat_index": 0.72,
-    "total_hot_m": 399,
+    "avg_surface_c": 45.1,
+    "avg_heat_index": 0.77,
+    "total_hot_m": 362,
     "bus_stops": 3,
     "schools": 0,
     "hospitals": 2,
@@ -188,35 +188,35 @@
   },
   {
     "corridor": "Arya Samaj Road",
-    "avg_surface_c": 45.0,
-    "avg_heat_index": 0.7,
-    "total_hot_m": 194,
+    "avg_surface_c": 45.7,
+    "avg_heat_index": 0.77,
+    "total_hot_m": 368,
     "bus_stops": 1,
     "schools": 2,
     "hospitals": 1,
-    "lon": 77.19699,
-    "lat": 28.6457
+    "lon": 77.19071,
+    "lat": 28.64938
+  },
+  {
+    "corridor": "Abdul Rahman Marg",
+    "avg_surface_c": 45.2,
+    "avg_heat_index": 0.75,
+    "total_hot_m": 301,
+    "bus_stops": 1,
+    "schools": 1,
+    "hospitals": 2,
+    "lon": 77.19615,
+    "lat": 28.64762
   },
   {
     "corridor": "Dayal chowk",
     "avg_surface_c": 44.6,
     "avg_heat_index": 0.71,
-    "total_hot_m": 184,
+    "total_hot_m": 54,
     "bus_stops": 1,
     "schools": 2,
     "hospitals": 1,
-    "lon": 77.19702,
-    "lat": 28.64555
-  },
-  {
-    "corridor": "Abdul Rahman Marg",
-    "avg_surface_c": 44.8,
-    "avg_heat_index": 0.71,
-    "total_hot_m": 182,
-    "bus_stops": 1,
-    "schools": 1,
-    "hospitals": 2,
-    "lon": 77.1978,
-    "lat": 28.64961
+    "lon": 77.19725,
+    "lat": 28.64565
   }
 ]

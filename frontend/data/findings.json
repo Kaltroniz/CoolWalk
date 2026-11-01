@@ -5,79 +5,71 @@
   "lst_p95_c": 46.3,
   "hottest": [
     {
-      "name": "Chipwara Khurd",
-      "heat": 0.934,
-      "lst_c": 46.1,
-      "length_m": 322.0,
-      "lon": 77.23062,
-      "lat": 28.65076
+      "name": "Bahadurgarh Road",
+      "heat": 0.882,
+      "lst_c": 46.7,
+      "length_m": 1144.0,
+      "lon": 77.21255,
+      "lat": 28.66092
     },
     {
-      "name": "Gali Ahar",
-      "heat": 0.918,
-      "lst_c": 46.0,
-      "length_m": 319.0,
-      "lon": 77.23262,
-      "lat": 28.65441
-    },
-    {
-      "name": "Kinari Bazar",
-      "heat": 0.914,
-      "lst_c": 46.2,
-      "length_m": 323.0,
-      "lon": 77.23152,
-      "lat": 28.6553
-    },
-    {
-      "name": "Maliwara",
-      "heat": 0.895,
+      "name": "Chawri Bazar",
+      "heat": 0.871,
       "lst_c": 46.3,
-      "length_m": 305.0,
-      "lon": 77.22831,
-      "lat": 28.65474
+      "length_m": 596.0,
+      "lon": 77.2278,
+      "lat": 28.6496
     },
     {
-      "name": "\u06af\u0627\u0646\u062f\u06be\u06cc \u06af\u0644\u06cc",
-      "heat": 0.892,
-      "lst_c": 46.1,
-      "length_m": 294.0,
-      "lon": 77.22225,
-      "lat": 28.65829
-    },
-    {
-      "name": "Chipwara Kalan",
-      "heat": 0.892,
+      "name": "Nai Sarak",
+      "heat": 0.868,
       "lst_c": 46.4,
-      "length_m": 252.0,
-      "lon": 77.23301,
-      "lat": 28.65251
+      "length_m": 739.0,
+      "lon": 77.22989,
+      "lat": 28.65122
     },
     {
-      "name": "Haidar Quli",
-      "heat": 0.886,
-      "lst_c": 46.0,
-      "length_m": 376.0,
-      "lon": 77.22433,
-      "lat": 28.65557
+      "name": "Ballimaran",
+      "heat": 0.864,
+      "lst_c": 45.9,
+      "length_m": 877.0,
+      "lon": 77.22541,
+      "lat": 28.65571
     },
     {
-      "name": "Dariba Kalan",
-      "heat": 0.886,
+      "name": "Azad Market Road",
+      "heat": 0.842,
       "lst_c": 46.2,
-      "length_m": 366.0,
-      "lon": 77.23347,
-      "lat": 28.65413
+      "length_m": 1488.0,
+      "lon": 77.21386,
+      "lat": 28.66294
+    },
+    {
+      "name": "Bara Hindu Rao Road",
+      "heat": 0.836,
+      "lst_c": 46.1,
+      "length_m": 857.0,
+      "lon": 77.21119,
+      "lat": 28.65895
+    },
+    {
+      "name": "Ram Bagh Road",
+      "heat": 0.824,
+      "lst_c": 45.7,
+      "length_m": 1252.0,
+      "lon": 77.2034,
+      "lat": 28.66542
+    },
+    {
+      "name": "Sirkeenwalan Road",
+      "heat": 0.818,
+      "lst_c": 45.8,
+      "length_m": 821.0,
+      "lon": 77.22391,
+      "lat": 28.652
     }
   ],
   "coolest": [
-    {
-      "name": "path f",
-      "heat": 0.0,
-      "lst_c": 39.5,
-      "length_m": 268.0,
-      "lon": 77.24594,
-      "lat": 28.60246
-    },
     {
       "name": "route b",
       "heat": 0.0,
@@ -85,30 +77,6 @@
       "length_m": 549.0,
       "lon": 77.24764,
       "lat": 28.60485
-    },
-    {
-      "name": "path e",
-      "heat": 0.0,
-      "lst_c": 39.1,
-      "length_m": 356.0,
-      "lon": 77.24824,
-      "lat": 28.60283
-    },
-    {
-      "name": "route a",
-      "heat": 0.0,
-      "lst_c": 39.0,
-      "length_m": 428.0,
-      "lon": 77.2493,
-      "lat": 28.60101
-    },
-    {
-      "name": "Agrangzeb road",
-      "heat": 0.0,
-      "lst_c": 40.2,
-      "length_m": 280.0,
-      "lon": 77.21256,
-      "lat": 28.59957
     },
     {
       "name": "Aurangzeb Lane",
@@ -119,20 +87,52 @@
       "lat": 28.59838
     },
     {
-      "name": "path c",
-      "heat": 0.0,
-      "lst_c": 39.5,
-      "length_m": 381.0,
-      "lon": 77.24613,
-      "lat": 28.6048
+      "name": "Safdarjung Lane",
+      "heat": 0.007,
+      "lst_c": 40.3,
+      "length_m": 1145.0,
+      "lon": 77.20716,
+      "lat": 28.60096
     },
     {
-      "name": "path r5",
-      "heat": 0.0,
-      "lst_c": 40.0,
-      "length_m": 301.0,
-      "lon": 77.24347,
-      "lat": 28.60532
+      "name": "path s3",
+      "heat": 0.019,
+      "lst_c": 40.5,
+      "length_m": 549.0,
+      "lon": 77.24858,
+      "lat": 28.60765
+    },
+    {
+      "name": "Krishna Menon Lane",
+      "heat": 0.019,
+      "lst_c": 40.5,
+      "length_m": 662.0,
+      "lon": 77.21007,
+      "lat": 28.60503
+    },
+    {
+      "name": "Motilal Nehru Place",
+      "heat": 0.027,
+      "lst_c": 40.6,
+      "length_m": 534.0,
+      "lon": 77.21718,
+      "lat": 28.60707
+    },
+    {
+      "name": "Tees January Lane",
+      "heat": 0.031,
+      "lst_c": 40.4,
+      "length_m": 572.0,
+      "lon": 77.21415,
+      "lat": 28.60389
+    },
+    {
+      "name": "Rajesh Pilot Marg",
+      "heat": 0.035,
+      "lst_c": 40.4,
+      "length_m": 1369.0,
+      "lon": 77.22187,
+      "lat": 28.5971
     }
   ],
   "place_exposure": {

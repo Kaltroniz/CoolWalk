@@ -38,6 +38,12 @@ with sync_playwright() as p:
     mobile_page.wait_for_timeout(3000)
     mobile_page.screenshot(path=str(OUT / '03_phone_layout.png'))
     print('Captured 03_phone_layout.png')
+
+    # 3b. Mobile Collapsed State (showing full map and markers)
+    mobile_page.click('#grab')
+    mobile_page.wait_for_timeout(1000)
+    mobile_page.screenshot(path=str(OUT / '03_phone_collapsed.png'))
+    print('Captured 03_phone_collapsed.png')
     mobile_page.close()
 
     # 4. Cool-Refuge Finder & Places layer

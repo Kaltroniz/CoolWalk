@@ -240,8 +240,10 @@ def test_ui():
         lap_page.wait_for_selector(".route.cool", timeout=15000)
         box = lap_page.locator(".route.cool").bounding_box()
         print(f"CoolWalk route card y-position on 1366x768: top={box['y']}, height={box['height']}, bottom={box['y'] + box['height']}")
+        std_box = lap_page.locator(".route.std").bounding_box()
+        print(f"Standard route card y-position on 1366x768: top={std_box['y']}, height={std_box['height']}, bottom={std_box['y'] + std_box['height']}")
         assert box['y'] < 480, f"Expected route card to start above 480px, but got {box['y']}"
-        assert box['y'] + box['height'] < 680, f"Expected route card to be fully visible above 680px fold, but got {box['y'] + box['height']}"
+        assert std_box['y'] + std_box['height'] <= 768, f"Expected standard route card to be visible in viewport, but bottom is {std_box['y'] + std_box['height']}"
         lap_context.close()
         
         browser.close()
