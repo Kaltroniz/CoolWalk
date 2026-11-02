@@ -11,6 +11,8 @@ Built for the AWS Builder Center "Weekend Challenge: Map It".
 
 ## How it works
 
+![CoolWalk Cloud Architecture](docs/screenshots/architecture.png)
+
 ```mermaid
 flowchart LR
   L8[Landsat 8/9 surface temperature<br/>requester-pays S3 bucket] --> P[Python pipeline<br/>scores 35k segments]
