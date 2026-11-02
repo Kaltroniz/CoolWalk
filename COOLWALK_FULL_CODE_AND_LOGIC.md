@@ -2871,7 +2871,7 @@ h1{
   </div>
 
   <!-- ===== 6. FOOTER ===== -->
-  <p class="foot" id="foot">Heat is estimated from Landsat surface temperature and Sentinel-2 vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson">Download the data</a> (GeoJSON).</p>
+  <p class="foot" id="foot">Heat is estimated from Landsat surface temperature and Sentinel-2 vegetation. It shows where streets hold heat, not the air temperature you will feel. <a href="data/heat_grid.geojson" download="heat_grid.geojson">Download the data</a> (GeoJSON) · <a href="architecture.html" target="_blank" rel="noopener">Cloud architecture</a></p>
 </aside>
 <div id="map" role="application" aria-label="Map of central Delhi"></div>
 <div class="map-legend" id="mapLegend" aria-hidden="true">
@@ -4610,6 +4610,8 @@ Built for the AWS Builder Center "Weekend Challenge: Map It".
 ![CoolWalk Routed Walk](docs/screenshots/02_routed_walk.png)
 
 ## How it works
+
+![CoolWalk Cloud Architecture](docs/screenshots/architecture.png)
 
 ```mermaid
 flowchart LR
