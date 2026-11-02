@@ -3,312 +3,308 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CoolWalk - Cloud & Data Architecture</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<title>CoolWalk — System Architecture</title>
 <style>
-  :root {
-    --bg: #0B0F17;
-    --card: #151D2A;
-    --card-border: #222F44;
-    --card-hover: #1E293B;
-    --ink: #F1F5F9;
-    --ink2: #94A3B8;
-    --ink3: #64748B;
-    --cool: #10B981;
-    --cool-soft: rgba(16, 185, 129, 0.12);
-    --aws: #FF9900;
-    --aws-soft: rgba(255, 153, 0, 0.12);
-    --blue: #38BDF8;
-    --blue-soft: rgba(56, 189, 248, 0.12);
-    --purple: #A855F7;
-    --purple-soft: rgba(168, 85, 247, 0.12);
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #FFFFFF;
+    display: flex; justify-content: center; align-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--ink);
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    padding: 30px;
-    overflow-x: hidden;
+  .diagram-container {
+    width: 100vw; height: 100vh;
+    display: flex; justify-content: center; align-items: center;
+    padding: 20px; box-sizing: border-box;
   }
-  .slide {
-    width: 100%;
-    max-width: 1320px;
-    background: linear-gradient(145deg, #101726 0%, #0D131F 100%);
-    border: 1px solid var(--card-border);
-    border-radius: 20px;
-    padding: 40px 48px;
-    box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7);
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-  }
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    padding-bottom: 20px;
-  }
-  .title-group h1 {
-    font-family: 'Bricolage Grotesque', sans-serif;
-    font-size: 32px;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .title-group h1 span.badge {
-    background: var(--cool-soft);
-    color: var(--cool);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    font-size: 13px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-family: 'Instrument Sans', sans-serif;
-  }
-  .subtitle {
-    color: var(--ink2);
-    font-size: 15px;
-    margin-top: 6px;
-  }
-  .aws-tag {
-    color: var(--aws);
-    font-weight: 600;
-    font-size: 13.5px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--aws-soft);
-    padding: 6px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 153, 0, 0.25);
-  }
-
-  /* Grid of architectural columns */
-  .arch-grid {
-    display: grid;
-    grid-template-columns: 240px 30px 280px 30px 320px 30px 240px;
-    align-items: center;
-    gap: 0;
-  }
-
-  .col {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .col-title {
-    font-family: 'Bricolage Grotesque', sans-serif;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-weight: 700;
-    color: var(--ink3);
-    margin-bottom: 2px;
-  }
-
-  .block {
-    background: var(--card);
-    border: 1px solid var(--card-border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    transition: all 0.2s;
-  }
-  .block:hover {
-    border-color: var(--ink3);
-    transform: translateY(-2px);
-  }
-  .block-tag {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 5px;
-  }
-  .block-title {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--ink);
-    margin-bottom: 4px;
-  }
-  .block-desc {
-    font-size: 12px;
-    color: var(--ink2);
-    line-height: 1.4;
-  }
-
-  /* Color variants */
-  .tag-green { color: var(--cool); }
-  .tag-orange { color: var(--aws); }
-  .tag-blue { color: var(--blue); }
-  .tag-purple { color: var(--purple); }
-
-  .b-green { border-left: 3px solid var(--cool); }
-  .b-orange { border-left: 3px solid var(--aws); }
-  .b-blue { border-left: 3px solid var(--blue); }
-  .b-purple { border-left: 3px solid var(--purple); }
-
-  .arrow {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    color: var(--ink3);
-    font-size: 18px;
-    user-select: none;
-  }
-
-  .footer-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-top: 18px;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    font-size: 13px;
-    color: var(--ink2);
-  }
-  .footer-bar strong { color: var(--ink); }
-  .live-pill {
-    background: rgba(16, 185, 129, 0.15);
-    color: var(--cool);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-weight: 600;
-    font-size: 12px;
+  svg {
+    max-width: 100%; max-height: 100%;
+    width: auto; height: auto;
+    object-fit: contain;
   }
 </style>
 </head>
 <body>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" style="background:#FFFFFF; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <marker id="arr-gray" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#475569" />
+    </marker>
+    <marker id="arr-orange" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#D97706" />
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#0284C7" />
+    </marker>
+    <filter id="box-shadow" x="-3%" y="-3%" width="106%" height="108%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.05" flood-color="#0F172A" />
+    </filter>
+  </defs>
 
-<div class="slide">
-  <!-- Header -->
-  <div class="header">
-    <div class="title-group">
-      <h1>🌿 CoolWalk <span class="badge">AWS Serverless Architecture</span></h1>
-      <p class="subtitle">Microclimate-aware pedestrian routing pipeline & spatial analytics on AWS Open Data</p>
-    </div>
-    <div class="aws-tag">
-      <span>☁ Built for AWS Builder Center "Map It"</span>
-    </div>
-  </div>
+  <!-- Title Header -->
+  <g transform="translate(60, 42)">
+    <text x="0" y="24" font-size="22" font-weight="700" fill="#0F172A" letter-spacing="-0.02em">CoolWalk — System Architecture</text>
+    <text x="0" y="46" font-size="13" fill="#64748B">Satellite Microclimate Ingestion Pipeline, Apache Iceberg Lakehouse, and Serverless Heat-Aware Pedestrian Router</text>
+  </g>
 
-  <!-- Architecture Flow -->
-  <div class="arch-grid">
+  <!-- Section Boundaries -->
+  <!-- External Data Sources (Left Box) -->
+  <rect x="60" y="95" width="220" height="715" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5" />
+  <rect x="60" y="95" width="220" height="34" rx="12" fill="#F1F5F9" />
+  <text x="75" y="117" font-size="11" font-weight="700" fill="#475569" letter-spacing="0.06em">1. OPEN DATA SOURCES</text>
+
+  <!-- AWS Cloud Boundary Box (Main Box) -->
+  <rect x="305" y="95" width="875" height="715" rx="12" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 6" />
+  <rect x="305" y="95" width="875" height="34" rx="12" fill="#FEF3C7" />
+  <text x="325" y="117" font-size="11" font-weight="700" fill="#B45309" letter-spacing="0.06em">AWS CLOUD (us-east-1)</text>
+
+  <!-- Client & Edge Box (Right Box) -->
+  <rect x="1205" y="95" width="335" height="715" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5" />
+  <rect x="1205" y="95" width="335" height="34" rx="12" fill="#F1F5F9" />
+  <text x="1225" y="117" font-size="11" font-weight="700" fill="#475569" letter-spacing="0.06em">3. CLIENT &amp; FRONTEND DELIVERY</text>
+
+  <!-- ==================== COLUMN 1: OPEN DATA ==================== -->
+  <!-- Landsat 8/9 -->
+  <g transform="translate(75, 150)" filter="url(#box-shadow)">
+    <rect width="190" height="90" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <rect width="4" height="90" rx="2" fill="#0284C7" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">USGS Landsat 8/9</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">Collection 2 Level-2</text>
+    <text x="14" y="54" font-size="10" fill="#0284C7" font-family="monospace">Band 10 (TIRS)</text>
+    <text x="14" y="70" font-size="10" fill="#64748B">Surface Temperature (LST)</text>
+    <text x="14" y="82" font-size="9.5" fill="#94A3B8">AWS Open Data S3</text>
+  </g>
+
+  <!-- Sentinel-2 -->
+  <g transform="translate(75, 260)" filter="url(#box-shadow)">
+    <rect width="190" height="90" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <rect width="4" height="90" rx="2" fill="#10B981" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">Sentinel-2 L2A</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">Copernicus 10m Rasters</text>
+    <text x="14" y="54" font-size="10" fill="#10B981" font-family="monospace">B4 (Red) / B8 (NIR)</text>
+    <text x="14" y="70" font-size="10" fill="#64748B">NDVI Vegetation Index</text>
+    <text x="14" y="82" font-size="9.5" fill="#94A3B8">AWS Open Data S3</text>
+  </g>
+
+  <!-- OSM Walk Network -->
+  <g transform="translate(75, 370)" filter="url(#box-shadow)">
+    <rect width="190" height="90" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <rect width="4" height="90" rx="2" fill="#6366F1" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">OpenStreetMap</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">Pedestrian Walk Network</text>
+    <text x="14" y="54" font-size="10" fill="#6366F1" font-family="monospace">35,748 directed segments</text>
+    <text x="14" y="70" font-size="10" fill="#64748B">1,188.5 km street network</text>
+    <text x="14" y="82" font-size="9.5" fill="#94A3B8">12,687 intersections</text>
+  </g>
+
+  <!-- OSM Places -->
+  <g transform="translate(75, 480)" filter="url(#box-shadow)">
+    <rect width="190" height="90" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <rect width="4" height="90" rx="2" fill="#8B5CF6" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">OSM Civic Amenities</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">Public Facilities Points</text>
+    <text x="14" y="54" font-size="10" fill="#8B5CF6" font-family="monospace">974 civic places</text>
+    <text x="14" y="70" font-size="10" fill="#64748B">Schools, Clinics, Bus stops</text>
+    <text x="14" y="82" font-size="9.5" fill="#94A3B8">463 Thermal Refuges</text>
+  </g>
+
+
+  <!-- ==================== COLUMN 2: AWS LAKEHOUSE & PIPELINE ==================== -->
+  <!-- Sub-group: Offline Processing -->
+  <rect x="325" y="140" width="255" height="155" rx="8" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />
+  <text x="340" y="162" font-size="11" font-weight="700" fill="#0F172A">Python Data Pipeline (01..08)</text>
+  <text x="340" y="180" font-size="10" fill="#64748B">• Sample rasters every 15m along streets</text>
+  <text x="340" y="196" font-size="10" fill="#64748B">• 183,616 points sampled (0.0% missing)</text>
+  <text x="340" y="214" font-size="10" fill="#0F172A" font-weight="600">Composite Heat Index Formula:</text>
+  <rect x="340" y="222" width="225" height="28" rx="4" fill="#F8FAFC" stroke="#CBD5E1" />
+  <text x="348" y="241" font-size="10" font-family="monospace" fill="#0F172A">0.60×LST_norm + 0.40×(1 - NDVI)</text>
+  <text x="340" y="270" font-size="9.5" fill="#64748B">Multi-date validation across 3 held-out scenes</text>
+
+  <!-- Amazon S3 Lakehouse -->
+  <g transform="translate(325, 315)" filter="url(#box-shadow)">
+    <rect width="255" height="215" rx="8" fill="#FFFFFF" stroke="#D97706" stroke-width="1.5" />
+    <rect width="255" height="28" rx="8" fill="#FEF3C7" />
+    <text x="14" y="19" font-size="11.5" font-weight="700" fill="#B45309">Amazon S3 (Lakehouse Storage)</text>
+    <text x="14" y="46" font-size="11" font-weight="700" fill="#0F172A">Apache Iceberg Tables</text>
+    <text x="14" y="62" font-size="10" fill="#475569">• <tspan font-family="monospace">coolwalk.segments</tspan> (35,748 rows)</text>
+    <text x="14" y="78" font-size="10" fill="#64748B">  Parquet format with ZSTD compression</text>
+    <text x="14" y="94" font-size="10" fill="#475569">• <tspan font-family="monospace">coolwalk.places</tspan> (974 civic points)</text>
+    <text x="14" y="110" font-size="10" fill="#64748B">  Scored against satellite heat &amp; NDVI</text>
+
+    <line x1="14" y1="124" x2="241" y2="124" stroke="#E2E8F0" stroke-width="1" />
+    <text x="14" y="142" font-size="11" font-weight="700" fill="#0F172A">Static Assets &amp; Routing Graph</text>
+    <text x="14" y="158" font-size="10" fill="#D97706" font-family="monospace">s3://.../router/graph.json.gz</text>
+    <text x="14" y="174" font-size="10" fill="#64748B">  Pre-scored network graph (gzip, 1.2 MB)</text>
+    <text x="14" y="190" font-size="10" fill="#64748B">  Edges: [u, v, len, heat, id, lst_c, ndvi]</text>
+  </g>
+
+  <!-- Amazon Athena -->
+  <g transform="translate(325, 550)" filter="url(#box-shadow)">
+    <rect width="255" height="110" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">Amazon Athena (Serverless SQL)</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">Direct queries against Iceberg lakehouse</text>
+    <text x="14" y="58" font-size="10" fill="#475569">• 150m Heat Grid aggregation (2,092 cells)</text>
+    <text x="14" y="74" font-size="10" fill="#475569">• Top 20 Civic Shade Priority Corridors</text>
+    <text x="14" y="90" font-size="10" fill="#475569">• Exported to static JSON/CSV for web client</text>
+  </g>
+
+
+  <!-- ==================== COLUMN 3: SERVERLESS ROUTING API ==================== -->
+  <!-- Amazon EventBridge -->
+  <g transform="translate(615, 150)" filter="url(#box-shadow)">
+    <rect width="250" height="70" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">Amazon EventBridge</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">Scheduled Rule: <tspan font-family="monospace">rate(5 minutes)</tspan></text>
+    <text x="14" y="56" font-size="10" fill="#D97706">Pings /health to keep router Lambda warm</text>
+  </g>
+
+  <!-- AWS Lambda -->
+  <g transform="translate(615, 245)" filter="url(#box-shadow)">
+    <rect width="250" height="235" rx="8" fill="#FFFFFF" stroke="#D97706" stroke-width="2" />
+    <rect width="250" height="30" rx="8" fill="#FEF3C7" />
+    <text x="14" y="20" font-size="12" font-weight="700" fill="#B45309">AWS Lambda (Microservice Router)</text>
+    <text x="14" y="50" font-size="11" font-weight="700" fill="#0F172A">Runtime: Python 3.12 (2048 MB RAM)</text>
+    <text x="14" y="68" font-size="10" fill="#475569">• Decompresses graph.json.gz once in memory</text>
+    <text x="14" y="86" font-size="10" fill="#475569">• Spatial hash indexing (0.001° ~110m cells)</text>
+
+    <text x="14" y="110" font-size="11" font-weight="700" fill="#0F172A">Heat-Weighted A* Algorithm</text>
+    <text x="14" y="126" font-size="10" fill="#0F172A" font-family="monospace">cost = length_m × (1 + α × heat)</text>
+    <text x="14" y="142" font-size="10" fill="#475569">• Evaluates true physical surface temp (LST)</text>
+    <text x="14" y="158" font-size="10" fill="#475569">• Evaluates NDVI canopy density</text>
+    <text x="14" y="174" font-size="10" fill="#475569">• Enforces bounded detour threshold (≤ 1.45×)</text>
+    <text x="14" y="190" font-size="10" fill="#475569">• Embedded Cool-Refuge finder (463 places)</text>
+
+    <rect x="14" y="204" width="222" height="22" rx="4" fill="#ECFDF5" stroke="#A7F3D0" />
+    <text x="24" y="219" font-size="10.5" font-weight="700" fill="#065F46">Compute Latency: ~50 ms</text>
+  </g>
+
+  <!-- Amazon API Gateway -->
+  <g transform="translate(615, 505)" filter="url(#box-shadow)">
+    <rect width="250" height="145" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+    <text x="14" y="22" font-size="12" font-weight="700" fill="#0F172A">Amazon API Gateway</text>
+    <text x="14" y="38" font-size="10.5" fill="#64748B">HTTP API v2 Payload Format</text>
+    <text x="14" y="58" font-size="10" fill="#475569">• <tspan font-family="monospace">POST /route</tspan> (origin, dest, alpha)</text>
+    <text x="14" y="74" font-size="10" fill="#475569">• <tspan font-family="monospace">POST /score</tspan> (scores Amazon Location line)</text>
+    <text x="14" y="90" font-size="10" fill="#475569">• <tspan font-family="monospace">POST /refuge</tspan> (nearest cool shelters)</text>
+    <text x="14" y="106" font-size="10" fill="#475569">• <tspan font-family="monospace">GET /health</tspan> (metadata &amp; keep-warm)</text>
+    <text x="14" y="126" font-size="9.5" fill="#D97706">Throttled: 20 req/s, 50 burst · CORS protected</text>
+  </g>
+
+  <!-- Amazon Location Service (Inside AWS Region) -->
+  <g transform="translate(900, 150)" filter="url(#box-shadow)">
+    <rect width="255" height="195" rx="8" fill="#FFFFFF" stroke="#0284C7" stroke-width="2" />
+    <rect width="255" height="30" rx="8" fill="#E0F2FE" />
+    <text x="14" y="20" font-size="12" font-weight="700" fill="#0369A1">Amazon Location Service (v2)</text>
+    <text x="14" y="48" font-size="11" font-weight="700" fill="#0F172A">Maps &amp; Places v2 API Key</text>
+    <text x="14" y="68" font-size="10" fill="#475569">• <tspan font-weight="600">Maps API:</tspan> Standard Light vector tiles</text>
+    <text x="14" y="84" font-size="10" fill="#64748B">  Smooth zoom levels 11–18 with building footprints</text>
+
+    <text x="14" y="106" font-size="10" fill="#475569">• <tspan font-weight="600">Places API v2:</tspan> Autosuggest &amp; geocoding</text>
+    <text x="14" y="122" font-size="10" fill="#64748B">  Fast text query for landmarks &amp; addresses</text>
+
+    <text x="14" y="144" font-size="10" fill="#475569">• <tspan font-weight="600">Reverse Geocoding:</tspan> Pin labeling</text>
+    <text x="14" y="160" font-size="10" fill="#64748B">  Resolves lat/lon clicks to recognized street names</text>
+
+    <text x="14" y="182" font-size="10" fill="#475569">• <tspan font-weight="600">Routes API v2:</tspan> Baseline pedestrian walk</text>
+  </g>
+
+
+  <!-- ==================== COLUMN 4: CLIENT & FRONTEND ==================== -->
+  <!-- AWS Amplify Hosting -->
+  <g transform="translate(1225, 150)" filter="url(#box-shadow)">
+    <rect width="295" height="110" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.2" />
+    <text x="16" y="24" font-size="12.5" font-weight="700" fill="#0F172A">AWS Amplify Hosting (us-east-2)</text>
+    <text x="16" y="42" font-size="11" fill="#64748B">Static Web App Delivery (HTTP/2)</text>
+    <text x="16" y="64" font-size="10.5" fill="#475569">• Continuous zero-build manual zip deployment</text>
+    <text x="16" y="80" font-size="10.5" fill="#475569">• Managed SSL/TLS Certificate (Zero config HTTPS)</text>
+    <text x="16" y="98" font-size="10.5" fill="#10B981" font-weight="600">main.d3miw0zrayytbj.amplifyapp.com</text>
+  </g>
+
+  <!-- Client Browser Single Page App -->
+  <g transform="translate(1225, 290)" filter="url(#box-shadow)">
+    <rect width="295" height="425" rx="8" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5" />
+    <rect width="295" height="30" rx="8" fill="#0F172A" />
+    <text x="16" y="20" font-size="12" font-weight="700" fill="#FFFFFF">Client Web Application (Browser)</text>
     
-    <!-- Col 1: Open Data Sources -->
-    <div class="col">
-      <div class="col-title">1. Open Data Sources</div>
+    <text x="16" y="52" font-size="11" font-weight="700" fill="#0F172A">MapLibre GL 4.7.1 WebGL Engine</text>
+    <text x="16" y="68" font-size="10" fill="#64748B">• 2,092 dynamic heat grid polygons</text>
+    <text x="16" y="84" font-size="10" fill="#64748B">• Color-coded thermal route line overlays</text>
+    <text x="16" y="100" font-size="10" fill="#64748B">• Floating responsive on-map heat legend</text>
 
-      <div class="block b-blue">
-        <div class="block-tag tag-blue">Satellite Thermal</div>
-        <div class="block-title">USGS Landsat 8/9</div>
-        <div class="block-desc">Collection 2 L2 surface temperature (TIRS Band 10) via AWS Registry of Open Data.</div>
-      </div>
+    <line x1="16" y1="114" x2="279" y2="114" stroke="#E2E8F0" stroke-width="1" />
 
-      <div class="block b-green">
-        <div class="block-tag tag-green">Copernicus 10m</div>
-        <div class="block-title">Sentinel-2 L2A</div>
-        <div class="block-desc">Red & NIR spectral bands used to compute high-res NDVI vegetation canopy index.</div>
-      </div>
+    <text x="16" y="134" font-size="11" font-weight="700" fill="#0F172A">Dual Walk Comparison Deck</text>
+    <text x="16" y="150" font-size="10" fill="#475569">• Standard Walk (Amazon Location pedestrian)</text>
+    <text x="16" y="166" font-size="10" fill="#475569">• CoolWalk (Lambda microclimate router)</text>
+    <text x="16" y="182" font-size="10" fill="#475569">• High-heat time avoided &amp; extra minutes</text>
+    <text x="16" y="198" font-size="10" fill="#475569">• Objective mean surface temperature difference</text>
 
-      <div class="block b-purple">
-        <div class="block-tag tag-purple">Spatial Network</div>
-        <div class="block-title">OpenStreetMap</div>
-        <div class="block-desc">35,748 directed walking segments, 12,687 intersections, and 974 civic points.</div>
-      </div>
-    </div>
+    <line x1="16" y1="212" x2="279" y2="212" stroke="#E2E8F0" stroke-width="1" />
 
-    <!-- Arrow 1 -->
-    <div class="arrow">➔</div>
+    <text x="16" y="232" font-size="11" font-weight="700" fill="#0F172A">Interactive Features</text>
+    <text x="16" y="248" font-size="10" fill="#475569">• 48-bin heat strip scrubber with map projection</text>
+    <text x="16" y="264" font-size="10" fill="#475569">• Dynamic Tradeoff slider (Fastest ↔ Coolest)</text>
+    <text x="16" y="280" font-size="10" fill="#475569">• Cool-Refuge finder (parks, water, metro)</text>
+    <text x="16" y="296" font-size="10" fill="#475569">• Civic Planner View (20 shade corridors + CSV)</text>
+    <text x="16" y="312" font-size="10" fill="#475569">• 40-second guided educational tour</text>
+    <text x="16" y="328" font-size="10" fill="#475569">• Shareable URL hash with auto reverse-geocoding</text>
 
-    <!-- Col 2: Pipeline & Lakehouse -->
-    <div class="col">
-      <div class="col-title">2. Ingestion & Lakehouse</div>
+    <line x1="16" y1="342" x2="279" y2="342" stroke="#E2E8F0" stroke-width="1" />
 
-      <div class="block b-blue">
-        <div class="block-tag tag-blue">Python Pipeline</div>
-        <div class="block-title">Microclimate Scoring</div>
-        <div class="block-desc">Samples rasters every 15m (183k points). Fuses thermal heat & NDVI into street heat index.</div>
-      </div>
+    <text x="16" y="362" font-size="11" font-weight="700" fill="#0F172A">Independent Multi-Date Check</text>
+    <text x="16" y="378" font-size="10" fill="#64748B">Validates cooler corridor persistence against</text>
+    <text x="16" y="394" font-size="10" fill="#64748B">held-out Landsat scenes (June 17, May 17, Apr 23)</text>
+    <text x="16" y="412" font-size="10" font-weight="600" fill="#10B981">✓ Consistently 0.2 to 2.4 °C cooler</text>
+  </g>
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">Amazon S3 + Parquet</div>
-        <div class="block-title">Apache Iceberg Tables</div>
-        <div class="block-desc"><code>coolwalk.segments</code> & <code>places</code> stored in open Parquet with ZSTD compression.</div>
-      </div>
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">Amazon Athena</div>
-        <div class="block-title">Serverless SQL Engine</div>
-        <div class="block-desc">Generates 150m spatial heat grid (2,092 cells) & 20 civic shade priority corridors.</div>
-      </div>
-    </div>
+  <!-- ==================== FLOW CONNECTORS & ARROWS ==================== -->
+  <!-- Landsat -> Pipeline -->
+  <path d="M 265 195 L 325 195" stroke="#0284C7" stroke-width="1.8" fill="none" marker-end="url(#arr-blue)" />
+  <!-- Sentinel -> Pipeline -->
+  <path d="M 265 305 L 305 305 L 305 215 L 325 215" stroke="#10B981" stroke-width="1.8" fill="none" marker-end="url(#arr-gray)" />
+  <!-- OSM -> Pipeline -->
+  <path d="M 265 415 L 315 415 L 315 235 L 325 235" stroke="#6366F1" stroke-width="1.8" fill="none" marker-end="url(#arr-gray)" />
+  <!-- Places -> Pipeline -->
+  <path d="M 265 525 L 320 525 L 320 255 L 325 255" stroke="#8B5CF6" stroke-width="1.8" fill="none" marker-end="url(#arr-gray)" />
 
-    <!-- Arrow 2 -->
-    <div class="arrow">➔</div>
+  <!-- Pipeline -> S3 -->
+  <path d="M 452 295 L 452 315" stroke="#D97706" stroke-width="2" fill="none" marker-end="url(#arr-orange)" />
+  <text x="458" y="308" font-size="9" font-family="monospace" fill="#D97706">write</text>
 
-    <!-- Col 3: Real-Time Services -->
-    <div class="col">
-      <div class="col-title">3. Real-Time Services</div>
+  <!-- S3 <-> Athena -->
+  <path d="M 452 530 L 452 550" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr-gray)" />
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">AWS Lambda (Python 3.12)</div>
-        <div class="block-title">Heat-Aware A* Router</div>
-        <div class="block-desc">~50ms compute. Minimizes <code>length × (1 + α × heat)</code> with bounded detour cap. Warm-pinged by EventBridge.</div>
-      </div>
+  <!-- S3 -> Lambda (graph.json.gz) -->
+  <path d="M 580 430 L 615 360" stroke="#D97706" stroke-width="1.8" fill="none" marker-end="url(#arr-orange)" />
+  <text x="548" y="388" font-size="9" font-family="monospace" fill="#D97706">graph.json.gz</text>
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">Amazon API Gateway</div>
-        <div class="block-title">HTTP API v2</div>
-        <div class="block-desc">Low-latency API proxy with 20 req/s rate-limiting, burst throttling, and CORS protection.</div>
-      </div>
+  <!-- EventBridge -> Lambda -->
+  <path d="M 740 220 L 740 245" stroke="#D97706" stroke-width="1.8" fill="none" marker-end="url(#arr-orange)" />
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">AWS Lambda</div>
-        <div class="block-title">Cool-Refuge Finder</div>
-        <div class="block-desc">Ranks nearest 463 parks, water fountains, and metro stations via coolest walking paths.</div>
-      </div>
-    </div>
+  <!-- API Gateway <-> Lambda -->
+  <path d="M 740 505 L 740 480" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arr-gray)" />
+  <text x="748" y="496" font-size="9" fill="#64748B">invoke</text>
 
-    <!-- Arrow 3 -->
-    <div class="arrow">➔</div>
+  <!-- Client <-> API Gateway -->
+  <path d="M 1225 570 L 865 570" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arr-gray)" />
+  <text x="1005" y="563" font-size="9.5" font-family="monospace" fill="#475569">HTTPS POST /route · /refuge</text>
 
-    <!-- Col 4: Frontend Delivery -->
-    <div class="col">
-      <div class="col-title">4. Mapping & Client</div>
+  <!-- Amplify -> Client -->
+  <path d="M 1372 260 L 1372 290" stroke="#10B981" stroke-width="1.8" fill="none" marker-end="url(#arr-gray)" />
+  <text x="1378" y="278" font-size="9" fill="#10B981">App Assets</text>
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">Amazon Location Service</div>
-        <div class="block-title">Maps & Places v2</div>
-        <div class="block-desc">Light base map style, place autocomplete, reverse-geocoding, and standard baseline routes.</div>
-      </div>
+  <!-- Location Service <-> Client -->
+  <path d="M 1155 240 L 1225 320" stroke="#0284C7" stroke-width="2" fill="none" marker-end="url(#arr-blue)" />
+  <text x="1150" y="270" font-size="9.5" fill="#0369A1">Maps, Places, Baseline Route</text>
 
-      <div class="block b-orange">
-        <div class="block-tag tag-orange">AWS Amplify Hosting</div>
-        <div class="block-title">Secure HTTPS Web App</div>
-        <div class="block-desc">Zero-dependency client with MapLibre GL, 48-bin heat strip scrubber, and civic exports.</div>
-      </div>
-    </div>
 
-  </div>
-
-  <!-- Footer -->
-  <div class="footer-bar">
-    <div><strong>Latency:</strong> ~50ms Lambda compute · <strong>Cost:</strong> &lt; $0.05 total run · <strong>License:</strong> MIT</div>
-    <div class="live-pill">● Live on AWS Amplify: main.d3miw0zrayytbj.amplifyapp.com</div>
-  </div>
+  <!-- ==================== FOOTER SPECIFICATIONS ==================== -->
+  <rect x="60" y="825" width="1480" height="42" rx="8" fill="#F8FAFC" stroke="#E2E8F0" />
+  <text x="80" y="851" font-size="11.5" fill="#334155"><tspan font-weight="700">Compute Latency:</tspan> ~50 ms pure A* algorithm on AWS Lambda · Warm client roundtrip ~1.0 s from Delhi</text>
+  <text x="700" y="851" font-size="11.5" fill="#334155"><tspan font-weight="700">Infrastructure Cost:</tspan> &lt; $0.05 total run across S3, Athena queries (&lt; 5 MB), and Lambda free tier</text>
+  <text x="1270" y="851" font-size="11.5" fill="#0F172A" font-weight="600">Open Source (MIT) · AWS Registry of Open Data</text>
+</svg>
 </div>
-
 </body>
 </html>
